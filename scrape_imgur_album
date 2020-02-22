@@ -1,0 +1,10 @@
+#!/bin/bash
+local client_id="your_id_here"
+local album_hash=${1##*imgur.com/a/}
+if [[ -n $2 ]]; then client_id=$2; fi
+for url in $( curl -s https://api.imgur.com/3/album/${album_hash}/images -H "Authorization: Client-Id ${client_id}" |
+  python -c "import sys, json; print reduce(lambda a,b:a + '\n'+b, [image['link'].encode('ascii') for image in json.load(sys.stdin)['data']]);" )
+do
+  echo Downloading $url
+  curl -sLO $url
+done
