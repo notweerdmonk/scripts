@@ -1,0 +1,122 @@
+#!/bin/bash
+
+MY_PATH=$(readlink -f $0)
+YOUTUBEDL_PATH=""
+
+if [[ "$1" == "path" ]]; then
+  if [[ -z "$2" ]]; then
+    echo [!] No path provided for youtube-dl
+  else
+    YOUTUBEDL_PATH=$(realpath $2)/youtube-dl
+    sed -i "$(grep -n -m1 "^YOUTUBEDL_PATH=" ${MY_PATH} | cut -d: -f1)s|.*|YOUTUBEDL_PATH=\"${YOUTUBEDL_PATH}\"|" ${MY_PATH}
+  fi
+  exit
+fi
+
+if [[ "$1" == setup  || -z "${YOUTUBEDL_PATH}" ]]; then
+  function cleanup {
+      rm -f youtube-dl.sig "$keyfile" key.asc trustdb.gpg
+  }
+  trap cleanup EXIT
+
+  echo [*] Checking for MPlayer
+  mplayer_path=$(which mplayer)
+  if [[ -n "${mplayer_path}" ]]; then
+    mplayer_version=$(${mplayer_path} -v | sed -n '1p' | cut -d, -f1)
+    echo [*] Found ${mplayer_version}
+  else
+    echo [!] Could not find Mplayer
+    exit
+  fi
+
+  if [[ -n "$2" ]]; then
+    cd $2
+  else
+    cd $(dirname ${MY_PATH}) 
+  fi
+
+  YOUTUBEDL_PATH=$(pwd)
+  echo [*] Installing youtube-dl at ${YOUTUBEDL_PATH}
+
+  echo [*] Downloading youtube-dl
+  $(curl -sLO https://yt-dl.org/downloads/latest/youtube-dl)
+  if [[ ! -f youtube-dl ]]; then
+    echo [!] Could not download youtube-dl
+    exit
+  fi
+  chmod a+x youtube-dl
+  echo [*] Downloading youtube-dl.sig
+  curl -sLO https://yt-dl.org/downloads/latest/youtube-dl.sig
+  if [[ ! -f youtube-dl.sig ]]; then
+    echo [!] Could not download youtube-dl.sig
+    exit
+  fi
+  echo [*] Downloading PGP key 
+  curl -sL https://dstftw.github.io/keys/18A9236D.asc -o key.asc
+  if [[ ! -f key.asc ]]; then
+    echo [!] Could not find PGP key
+    exit
+  fi
+  echo [*] Downloaded files
+
+  echo [*] Verifying youtube-dl download
+  set -e
+  keyfile=$(mktemp --suffix=.gpg)
+  gpg --yes -o "$keyfile" --dearmor key.asc
+  if [[ $(gpg --no-default-keyring --keyring "$keyfile" --homedir ./ --verify youtube-dl.sig youtube-dl 2>/dev/null && echo 1 ) != 1 ]]; then
+    echo [!] Could not verify PGP signature for youtube-dl
+    exit
+  fi
+  set +e
+  cleanup
+  echo [*] Verified youtube-dl download
+
+  YOUTUBEDL_PATH=${YOUTUBEDL_PATH}/youtube-dl
+  sed -i "$(grep -n -m1 "^YOUTUBEDL_PATH=" ${MY_PATH} | cut -d: -f1)s|.*|YOUTUBEDL_PATH=\"${YOUTUBEDL_PATH}\"|" ${MY_PATH}
+
+  echo [*] Installed ${YOUTUBEDL_PATH}
+
+  exit
+fi
+
+if [[ "$1" == "update" ]]; then
+  # only update youtube-dl for now
+  echo [*] Updating ${YOUTUBEDL_PATH}
+  ${YOUTUBEDL_PATH} -U
+  exit
+fi
+
+if [[ -z "$1" ]]; then
+  echo "Usage:"
+  echo "To install youtube-dl"
+  echo "$0                         Install youtube-dl in the same directory as"
+  echo "                             this script. This option will only work"
+  echo "                             the first time this script runs."
+  echo "$0 setup [<path>]          Install youtube-dl in specified directory."
+  echo "$0 update                  Update youtube-dl."
+  echo
+  echo "To play"
+  echo "$0 <url> [<format-code>]   Play given link in specified format. When the"
+  echo "                             format code is not given the script will"
+  echo "                             all available formats and prompt the user."
+
+  exit
+else
+  url=$1
+fi
+
+if [[ -z "$2" ]]; then
+  echo [*] Available formats for \"$(${YOUTUBEDL_PATH} -e ${url})\":
+
+  ${YOUTUBEDL_PATH} -s -F ${url} | sed -n '3,$p'
+
+  echo -n "Provide format code: " 
+  read fmt
+else
+  fmt=$2
+  echo [*] Using format code ${fmt} for \"$(${YOUTUBEDL_PATH} -e ${url})\"
+fi
+
+echo [*] Starting mplayer
+mplayer -msglevel cplayer=5:statusline=5:all=0 -ontop -cookies -cookies-file ./cookies.txt $(${YOUTUBEDL_PATH} -gf ${fmt} --cookies ./cookies.txt "${url}") 2>/dev/null
+
