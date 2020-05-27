@@ -96,9 +96,9 @@ if [[ -z "$1" ]]; then
   echo "$0 update                  Update youtube-dl."
   echo
   echo "To play"
-  echo "$0 <url> [<format-code>]   Play given link in specified format. When the"
+  echo "$0 <url> [<format-code>]   Play given link in specified format. When"
   echo "                             format code is not given the script will"
-  echo "                             all available formats and prompt the user."
+  echo "                             list available formats and prompt the user."
 
   exit
 else
