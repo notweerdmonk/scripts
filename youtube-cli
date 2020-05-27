@@ -7,7 +7,10 @@ if [[ "$1" == "path" ]]; then
   if [[ -z "$2" ]]; then
     echo [!] No path provided for youtube-dl
   else
-    YOUTUBEDL_PATH=$(realpath $2)/youtube-dl
+    YOUTUBEDL_PATH=$(realpath $2)
+    if [[ -d ${YOUTUBEDL_PATH} ]]; then
+      YOUTUBEDL_PATH=${YOUTUBEDL_PATH}/youtube-dl
+    fi
     sed -i "$(grep -n -m1 "^YOUTUBEDL_PATH=" ${MY_PATH} | cut -d: -f1)s|.*|YOUTUBEDL_PATH=\"${YOUTUBEDL_PATH}\"|" ${MY_PATH}
   fi
   exit
@@ -15,6 +18,8 @@ fi
 
 if [[ "$1" == setup  || -z "${YOUTUBEDL_PATH}" ]]; then
   function cleanup {
+      unset MY_PATH
+      unset YOUTUBEDL_PATH
       rm -f youtube-dl.sig "$keyfile" key.asc trustdb.gpg
   }
   trap cleanup EXIT
@@ -68,14 +73,12 @@ if [[ "$1" == setup  || -z "${YOUTUBEDL_PATH}" ]]; then
     exit
   fi
   set +e
-  cleanup
   echo [*] Verified youtube-dl download
 
   YOUTUBEDL_PATH=${YOUTUBEDL_PATH}/youtube-dl
   sed -i "$(grep -n -m1 "^YOUTUBEDL_PATH=" ${MY_PATH} | cut -d: -f1)s|.*|YOUTUBEDL_PATH=\"${YOUTUBEDL_PATH}\"|" ${MY_PATH}
 
   echo [*] Installed ${YOUTUBEDL_PATH}
-
   exit
 fi
 
@@ -93,6 +96,7 @@ if [[ -z "$1" ]]; then
   echo "                             this script. This option will only work"
   echo "                             the first time this script runs."
   echo "$0 setup [<path>]          Install youtube-dl in specified directory."
+  echo "$0 path [<path>]           Update path to youtube-dl."
   echo "$0 update                  Update youtube-dl."
   echo
   echo "To play"
@@ -103,6 +107,11 @@ if [[ -z "$1" ]]; then
   exit
 else
   url=$1
+fi
+
+if [[ ! -f ${YOUTUBEDL_PATH} ]]; then
+  echo [!] youtube-dl not found at ${YOUTUBEDL_PATH}
+  exit
 fi
 
 if [[ -z "$2" ]]; then
@@ -120,3 +129,5 @@ fi
 echo [*] Starting mplayer
 mplayer -msglevel cplayer=5:statusline=5:all=0 -ontop -cookies -cookies-file ./cookies.txt $(${YOUTUBEDL_PATH} -gf ${fmt} --cookies ./cookies.txt "${url}") 2>/dev/null
 
+unset MY_PATH
+unset YOUTUBEDL_PATH
