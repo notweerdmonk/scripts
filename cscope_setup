@@ -1,0 +1,16 @@
+#!/bin/bash
+
+if [[ "$1" == "start" ]]
+then
+  # Add more file extensions as needed
+  find . -name "*.c" -o -name "*.cpp" -o -name "*.cc" -o -name "*.h" -o -name "*.hpp" > cscope.files
+  echo "[*] Created cscope.files"
+fi
+
+if ! command -v cscope &> /dev/null
+then
+  echo "[!] Cscope not found"
+else
+  cscope -q -R -b -i cscope.files
+  echo "[*] Created reference database
+fi
