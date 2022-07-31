@@ -12,5 +12,5 @@ then
   echo "[!] Cscope not found"
 else
   cscope -q -R -b -i cscope.files
-  echo "[*] Created reference database
+  echo "[*] Created reference database"
 fi
