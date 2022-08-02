@@ -1,0 +1,256 @@
+#!/usr/bin/python3
+
+"""
+Script to sync P4 repositories.
+
+It can be automated using a cron job. An XML file provides tasks which include
+the actions to be performed, workspaces, changelists and files.
+
+Example of XML file syntax:
+<task>
+    <action>
+        opened/sync
+    </action>
+    <workspace>
+        ...
+    </workspace>
+    <changelist>
+        ...
+    </changelist>
+    <files>
+        ...
+    </files>
+</task>
+"""
+
+import os
+import argparse
+import xml.etree.ElementTree as et
+import logging
+
+import const
+
+const.syncp4repo_tasks_path = os.path.join(os.getenv('HOME'), '.config/syncp4repo/syncp4repo_tasks.xml')
+const.syncp4repo_log_path = os.path.join(os.getenv('HOME'), '.local/share/syncp4repo/syncp4repo.log')
+
+class syncp4repo:
+    def __init__(self):
+
+        self.argparser      = None
+        self.logger         = None
+        self.pargs          = None
+        self.logfilehandler = None
+        self.xmlfileobj     = None
+        self.tasks          = []
+
+        self.setup_logging()
+
+    def setup_logging(self):
+        self.logger = logging.getLogger('syncp4repo')
+        self.logger.setLevel(logging.DEBUG)
+
+        syncp4repo_log_dir = os.path.dirname(const.syncp4repo_log_path)
+        if not os.path.exists(syncp4repo_log_dir):
+            os.mkdir(syncp4repo_log_dir)
+
+        self.logfilehandler = logging.FileHandler(const.syncp4repo_log_path)
+        self.logfilehandler.setLevel(logging.DEBUG)
+
+        formatter = logging.Formatter('%(asctime)s : %(name)s-%(levelname)s : %(message)s')
+
+        self.logfilehandler.setFormatter(formatter)
+        self.logger.addHandler(self.logfilehandler)
+
+    def parse_arguments(self):
+
+        task = { 'action' : None, 'workspace' : None, 'files' : None, 'changelist' : None }
+
+        """
+        Argument members
+            action
+            xmlfile
+            workspace
+            changelist
+            files
+        """
+        self.argparser = argparse.ArgumentParser(description='Sync P4 repository.')
+        self.argparser.add_argument('action', type=str, choices=['sync', 'opened', 'auto'], help='action to perform')
+        self.argparser.add_argument('-x', '--xmlfile', type=str, help='XML file to read')
+        self.argparser.add_argument('-C', '--workspace', type=str, help='P4 workspace to check')
+        self.argparser.add_argument('-c', '--changelist', type=str, help='P4 changelist to check')
+        self.argparser.add_argument('-f', '--files', type=str, help='file specifications in depot or client syntax')
+
+        self.pargs = self.argparser.parse_args()
+
+        task['action']     = self.pargs.action
+        task['xmlfile']    = self.pargs.xmlfile
+        task['workspace']  = self.pargs.workspace
+        task['changelist'] = self.pargs.changelist
+        task['files']      = self.pargs.files
+
+        self.tasks.append(task)
+
+        return self.pargs
+
+    def get_root_from_client_spec(self, workspace: str) -> str:
+        root = None
+
+        try:
+            #p4 client -o workspace | grep -Po "^Root:.*" | grep -Po "(?<=Root:[\s])(.*)"
+            command = 'p4 -c ' + workspace + ' info | grep -Po "^Client root:.*" | grep -Po "(?<=Client root:[\s])(.*)"'
+            root = (os.popen(command).read()).strip('\n')
+
+        finally:
+            return root
+
+    def parse_xmlfile(self, xmlfile: str):
+        try:
+            if xmlfile == None:
+                xmlfile = const.syncp4repo_tasks_path
+
+            try:
+                self.xmlfileobj = open(xmlfile, 'r')
+
+                tree = et.parse(self.xmlfileobj)
+                root = tree.getroot()
+
+                if root.tag != 'syncp4repo':
+                    raise Exception('Invalid XML file')
+
+            except IOError as ie:
+                print('Could not open XML file: ' + xmlfile)
+                self.logger.error(str(ie))
+
+            except TypeError as te:
+                print('Invalid XML file: ' + xmlfile)
+                self.logger.error(str(te))
+
+            else:
+                print('syncp4repo is parsing XML file: ' + xmlfile)
+                self.logger.info('syncp4repo is parsing XML file: ' + xmlfile)
+
+                for item in root.iter('task'):
+                    task = { 'action' : None, 'workspace' : None, 'files' : None, 'changelist' : None }
+
+                    for field in item:
+                        if field.tag == 'action':
+                            task['action'] = field.text
+                        elif field.tag == 'workspace':
+                            task['workspace'] = field.text
+                        elif field.tag == 'changelist':
+                            task['changelist'] = field.text
+                        elif field.tag == 'files':
+                            task['files'] = field.text
+
+                    self.tasks.append(task)
+
+        finally:
+             return
+
+    def sync(self, workspace: str, files: str) -> str:
+        command = 'p4 sync -sq'
+
+        if workspace != None:
+            try:
+                root = self.get_root_from_client_spec(workspace);
+                os.chdir(root)
+
+                if files == None:
+                    print('Warning: no files specified! Syncing entire workspace may take too long.')
+                    consent = raw_input('Do you want to proceed? [Y/n]: ')
+
+                    if consent == 'y' or consent == 'Y':
+                        self.logger.warning('syncp4repo is trying to sync entire workspace: ' + workspace)
+                    else:
+                        command = None
+                        self.logger.warning('syncp4repo will not sync: ' + workspace)
+
+                        if consent != 'n' and consent != 'N':
+                            print('Invalid response!')
+
+                else:
+                    command = command + ' ' + files
+
+            except WindowsError as we:
+                print('Workspace path: ' + root + ' for workspace: ' + workspace + ' does not exist!')
+                self.logger.error(str(we))
+
+            except Exception as e:
+                print('Unknown error occured: ' + str(e))
+                self.logger.error(str(e))
+
+        else:
+            print('No valid workspace to sync!')
+            self.logger.error('No valid workspace to sync!')
+            command = None
+
+        return command
+
+    def list_opened(self, workspace: str, changelist: str, files: str) -> str:
+        command = 'p4 -ztag opened -s'
+
+        if workspace != None:
+            command = command + ' ' + '-C' + ' ' + workspace
+
+            if changelist != None:
+                command = command + ' ' + '-c' + ' ' + changelist
+
+            if files != None:
+                command = command + ' ' + files
+
+        else:
+            print('No valid workspace to get opened files!')
+            self.logger.error('No valid workspace to get opened files!')
+            command = None
+
+        return command
+
+    def task_handler(self):
+
+        for task in self.tasks:
+            command = None
+
+            if task['action'] == 'auto':
+                try:
+                    self.parse_xmlfile(task['xmlfile'])
+
+                except Exception as e:
+                    print('Unknown  error parsing XML file: ' + str(e))
+                    self.logger.error('Action: ' + task['action'] + ' : ' + str(e))
+
+                else:
+                    continue
+
+            elif task['action'] == 'opened':
+                try:
+                    command = self.list_opened(task['workspace'], task['changelist'], task['files'])
+
+                except Exception as e:
+                    print('Unknown error for action: ' + task['action'] + ' : ' + str(e))
+                    self.logger.error('Action: ' + task['action'] + ' : ' + str(e))
+
+            elif task['action'] == 'sync':
+                try:
+                    command = self.sync(task['workspace'], task['files'])
+
+                except Exception as e:
+                    print('Unknown error for action: ' + task['action'] + ' : ' + str(e))
+                    self.logger.error('Action: ' + task['action'] + ' : ' + str(e))
+
+
+            if command != None:
+                self.logger.info('Command: ' + command)
+                os.system(command)
+
+            else:
+                print('syncp4repo has no command to execute')
+                self.logger.info('syncp4repo has no command to execute')
+
+    def run(self):
+        self.logger.info('syncp4repo started')
+        self.parse_arguments()
+        self.task_handler()
+        self.logger.info('syncp4repo exited')
+
+if __name__ == '__main__':
+    syncp4repo().run()
