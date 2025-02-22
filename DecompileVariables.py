@@ -21,7 +21,7 @@ def decode_barray(arr, type=bytearray):
     for byte in arr_bytes:
         if type == str:
             if byte > 0x80:
-                bytestr += '\\x' + hex(byte)
+                bytestr += '\\x' + hex(byte)[2:]
             elif byte == 0x5c: # \
                 bytestr += '\\\\'
             elif byte == 0xa:  # CR
