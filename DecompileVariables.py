@@ -13,29 +13,30 @@ import struct
 output_file = open("data_variables.c", "w")
 
 def decode_barray(arr, type=bytearray):
-    bytestr = ''
+    bytestr = []
     fmtstr = '<' + 'B' * len(arr)
     arr_bytes = struct.unpack(fmtstr, arr)
-    i = 0
-    l = len(arr_bytes)
+
+    last_byte = arr_bytes[-1]
     for byte in arr_bytes:
         if type == str:
             if byte > 0x80:
-                bytestr += '\\x' + hex(byte)[2:]
+                bytestr.append('\\x' + hex(byte)[2:])
             elif byte == 0x5c: # \
-                bytestr += '\\\\'
-            elif byte == 0xa:  # CR
-                bytestr += '\\n\\\n'
+                bytestr.append('\\\\')
+            elif byte == 0xd:  # CR
+                bytestr.append('\\n\\\n')
+            elif byte == 0xa:  # LF
+                bytestr.append('\\n\\\n')
             elif byte != 0x00:
-                bytestr += chr(byte)
+                bytestr.append(chr(byte))
 
         else:
-            bytestr += str(hex(byte))
-            i += 1
-            if i < l:
-                bytestr += ", "
+            bytestr.append(str(hex(byte)))
+            if byte != last_byte:
+                bytestr.append(", ")
 
-    return bytestr
+    return ''.join(bytestr)
 
 currentProgram = getCurrentProgram()
 memory = currentProgram.getMemory()
