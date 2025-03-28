@@ -1,0 +1,111 @@
+#!/bin/bash
+
+# play rattles on the terminal
+
+function bell {
+  [[ -z "${1}" ]] && echo "Provide duration" && return 1
+  while true
+  do
+    tput bel
+    sleep "${1}"
+  done
+}
+
+function index {
+  local element="$1"
+  local arrayname="${2}"
+  eval "local arary=(\"\${arrayname[@]}\")"
+  for index in "${!array[@]}"; do
+    if [[ "${array[$index]}" == "$element" ]]; then
+      echo "$index"
+      return 0
+    fi
+  done
+  echo "-1"
+}
+
+function set_mypath {
+  declare -g g_mypath="$(realpath "${0}")"
+}
+
+function rattles {
+  command -v infocmp > /dev/null 2>&1 && \
+    [[ -z "$(infocmp | grep -oP "bel=[^,]+,{1}")" ]] && \
+    echo "Terminlal does not support bell" && exit 1
+
+  declare -g -a tims=(0.2 0.3 0.5 0.7 0.9 1.1 1.3 1.5)
+
+  count="${1}"
+
+  (
+    ! [[ "${count}" =~ ^(0x)?[0-9[:xdigit:]]+$ ]] || \
+    [[ "${count}" -lt 1 ]] || \
+    [[ "${count}" -gt 8 ]]
+  ) && echo "Too many rattles" && return 1
+
+  while [[ "${count}" -gt 0 ]]
+  do
+    ((count--))
+    t=("$(shuf -n1 -e "${tims[@]}")")
+    bell_tims+=("${t}")
+    idx="$(index "${t}" tims)"
+    unset "tims["${idx}"]"
+  done
+  #echo "${bell_tims[@]}"
+  echo "${bell_tims[@]}" | xargs -n 1 -P "${1}" "${g_mypath}" "bell" 
+}
+
+[[ -z "${1}" ]] && exit 1
+
+[[ "${1}" =~ ^-?h(elp)?$ ]] && \
+  {
+    echo -e "rattles - play rattles on the terminal"
+    echo
+    echo -e "USAGE"
+    echo -e "\trattles <ARG> [<DURATION>]"
+    echo
+    echo -e "DESCRIPTION"
+    echo -e "\tThis command accepts a first argument that can be:"
+    echo -e "\t- Number of rattles to play, should be a positive integer or hex number. "
+    echo
+    echo -e "\t- \"bell\": Rings the terminal bell. Requires the duration inbetween bell"
+    echo -e "\t rings (a positive integer or hex number) as second argument."
+    echo
+    echo -e "\tA rattle consists of a terminal bell repeating at certain interval which"
+    echo -e "\t is chosen randomly from a set. Maximum of eight rattles can be played."
+    echo
+    echo -e "ARGUMENTS"
+    echo -e "\t<ARG>"
+    echo -e "\t\tN\tThe number for rattles to play."
+    echo -e "\t\t\tA positive integer or hex number."
+    echo -e "\t\t\"bell\"\tRing the terminal bell repeatedly with "
+    echo -e "\t\t\tprovided duration."
+    echo
+    echo -e "\t<DURATION>"
+    echo -e "\t\tA floating point number with an optional suffix that can"
+    echo -e "\t\t be either of 's' for seconds (the default), 'm' for "
+    echo -e "\t\tminutes, 'h' for hours or 'd' for days. A duration of 0 "
+    echo -e "\t\tdisables the associated timeout."
+    echo -e "\t\tThis shall be the duration with which the terminal bell "
+    echo -e "\t\trepeats ringing if "bell" is used. Otherwise this shall "
+    echo -e "\t\tbe the duration till which the rattle is played."
+    echo
+
+#EXAMPLES
+#    your_command_name "foo" 42
+#    your_command_name 30
+#    your_command_name 0x1E
+#
+#EXIT STATUS
+#    0   Success
+#    1   Invalid arguments
+#    2   Missing second argument when "foo" is specified
+  } && exit 0
+
+[[ "${1}" == "bell" ]] && (bell "${2}" || true) && exit 0
+
+set_mypath
+
+[[ -z "${2}" ]] && (rattles "${1}" || true) && exit 0
+
+timeout "${2}" "${g_mypath}" "${1}"
