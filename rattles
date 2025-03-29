@@ -21,13 +21,11 @@ function bell {
 
 function index {
   local element="$1"
-  local arrayname="${2}"
-  eval "local arary=(\"\${arrayname[@]}\")"
-  for index in "${!array[@]}"; do
-    if [[ "${array[$index]}" == "$element" ]]; then
-      echo "$index"
-      return 0
-    fi
+  local array=("${!2}")
+  for index in "${!array[@]}"
+  do
+    [[ "${array[$index]}" == "$element" ]] && \
+      echo "${index}" && return 0
   done
   echo "-1"
 }
@@ -39,9 +37,10 @@ function set_mypath {
 function rattles {
   command -v infocmp > /dev/null 2>&1 && \
     [[ -z "$(infocmp | grep -oP "bel=[^,]+,{1}")" ]] && \
-    echo "Terminlal does not support bell" && exit 1
+    echo "Terminal does not support bell" && exit 1
 
-  declare -g -a tims=(0.2 0.3 0.5 0.7 0.9 1.1 1.3 1.5)
+  declare -a tims=(0.2 0.3 0.5 0.7 0.9 1.1 1.3 1.5)
+  declare -a tims_left=("${tims[@]}")
 
   count="${1}"
 
@@ -54,11 +53,11 @@ function rattles {
   while [[ "${count}" -gt 0 ]]
   do
     ((count--))
-    t=("$(shuf -n1 -e "${tims[@]}")")
+    t=("$(shuf -n1 -e "${tims_left[@]}")")
     bell_tims+=("${t}")
-    idx="$(index "${t}" tims)"
-    unset "tims["${idx}"]"
+    unset "tims_left["$(index "${t}" tims[@])"]"
   done
+
   echo "${bell_tims[@]}" | xargs -n 1 -P "${1}" "${g_mypath}" "bell"
 }
 
