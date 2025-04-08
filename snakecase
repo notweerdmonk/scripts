@@ -28,14 +28,37 @@ END {
 }
 '
 
-[[ ! -f "${1}" ]] && echo "${1} not found" && exit 1
+dobackup=0
+files=()
+
+while [[ -n "${1}" ]]
+do
+  [[ -z "${dobackup}" || "${dobackup}" -eq 0 ]] && \
+    ([[ "${1}" == "-b" ]] || [[ "${1}" == "--backup" ]]) && \
+    dobackup=1 && shift && continue
+
+  inputfiles="$(realpath -- "${1}" 2>/dev/null)"
+  [[ "${?}" -ne 0 ]] && echo "Unrecognized ${1}" && shift && continue
+  for file in "${inputfiles}"
+  do
+    ([[ ! -f "${file}" ]] && echo ""$(basename "${file}")" not found") && continue
+    files+=("${file}")
+  done
+
+  shift
+done
 
 ! command -v awk &> /dev/null && echo "awk not found" && exit 1
 
-file="$(realpath "${1}")"
-tmpfile="/tmp/""${1}"".copy"
-[[ "${2}" == "-b" || "${2}" == "--backup" ]] && \
-  cp "${file}" "${file}"".orig"
-awk "${awkcommand}" "${file}" "${tmpfile}"
-cp "${tmpfile}" "${file}"
-rm -f "${tmpfile}"
+for file in "${files[@]}"
+do
+  filename="$(basename "${file}")"
+  tmpfile="/tmp/""${filename}"".copy"
+  [[ "${dobackup}" -ne 0 ]] && \
+    cp "${file}" "${file}"".orig" && \
+    echo "Backed up to ""${file}"".orig"
+  awk "${awkcommand}" "${file}" ${tmpfile}
+  cp "${tmpfile}" "${file}"
+  rm -f "${tmpfile}"
+  echo "Snaked ${filename}"
+done
