@@ -6,8 +6,6 @@
 # kebab-case
 # Train-Case
 
-tmpfile="/tmp/""$1""_copy"
-
 awkcommand='
 BEGIN {
 }
@@ -35,6 +33,7 @@ END {
 ! command -v awk &> /dev/null && echo "awk not found" && exit 1
 
 file="$(realpath "${1}")"
+tmpfile="/tmp/""${1}"".copy"
 [[ "${2}" == "-b" || "${2}" == "--backup" ]] && \
   cp "${file}" "${file}"".orig"
 awk "${awkcommand}" "${file}" "${tmpfile}"
