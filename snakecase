@@ -16,7 +16,6 @@ BEGIN {
   pattern = "[^ .+=\"(]+[A-Z0-9][a-z0-9]+"
   if (match($0, pattern)) {
     newstr = matchstr = substr($0, RSTART, RLENGTH)
-    #newstr =I matchstr
     newstr = tolower(gensub(/([A-Z])([a-z]+)/, "_\\1\\2", "g", newstr))
     gsub(/^_/, "", newstr)
     gsub(matchstr, newstr)
