@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# Converts words to snake-case from
+# camelCase
+# PascalCase
+# kebab-case
+# Train-Case
+
+tmpfile="/tmp/""$1""_copy"
+
+awkcommand='
+BEGIN {
+}
+
+{
+  pattern = "[^ .+=\"(]+[A-Z0-9][a-z0-9]+"
+  if (match($0, pattern)) {
+    newstr = matchstr = substr($0, RSTART, RLENGTH)
+    #newstr =I matchstr
+    newstr = tolower(gensub(/([A-Z])([a-z]+)/, "_\\1\\2", "g", newstr))
+    gsub(/^_/, "", newstr)
+    gsub(matchstr, newstr)
+    gsub(/-/, "")
+  } else {
+    gsub(/-/, "_")
+  }
+  print $0 >> ARGV[2]
+}
+
+END {
+}
+'
+
+[[ ! -f "${1}" ]] && echo "${1} not found" && exit 1
+
+! command -v awk &> /dev/null && echo "awk not found" && exit 1
+
+file="$(realpath "${1}")"
+[[ "${2}" == "-b" || "${2}" == "--backup" ]] && \
+  cp "${file}" "${file}"".orig"
+awk "${awkcommand}" "${file}" "${tmpfile}"
+cp "${tmpfile}" "${file}"
+rm -f "${tmpfile}"
