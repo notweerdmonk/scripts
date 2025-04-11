@@ -89,7 +89,6 @@ BEGIN {
     gsub(ms, ns, $0)
   }
 
-  #print $0
   print $0 >> ARGV[2]
 }
 
