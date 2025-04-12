@@ -35,11 +35,11 @@ BEGIN {
       lsm[c]["start"] = o + sm[1, "start"]
       lsm[c++]["length"] =  sm[1, "length"]
 
-      # Subtract one from sm[0, "start"] to make it 1-index based
-      o = o + sm[0, "start"] - 1 + sm[0, "length"]
+      se = sm[0, "start"] + sm[0, "length"]
 
-      l = substr(l, sm[0, "start"] + sm[0, "length"],
-          length(l) - sm[0, "start"] -  sm[0, "length"] + 1)
+      # Subtract one from sm[0, "start"] to make it 1-index based
+      o = o + se - 1
+      l = substr(l, se, length(l) - se + 1)
     }
   }
 
@@ -58,7 +58,7 @@ BEGIN {
     }
 
     if (f == 1 && c > 0) {
-      for (i = 0; i <= c; i++) {
+      for (i = 0; i < c; i++) {
         if (o + m[tm ,"start"] > lsm[i]["start"] &&
             o + m[tm, "start"] + m[tm, "length"] < \
                 (lsm[i]["start"] + lsm[i]["length"])) {
@@ -69,11 +69,10 @@ BEGIN {
     }
 
     ns = ms = substr(l, m[tm, "start"], m[tm, "length"])
+    e = m[tm, "start"] + m[tm, "length"]
 
-    o = o + m[tm, "start"] - 1 + m[tm, "length"]
-
-    l = substr(l, m[tm, "start"] + m[tm, "length"],
-        length(l) - m[tm, "start"] - m[tm, "length"] + 1)
+    o = o + e - 1
+    l = substr(l, e, length(l) - e + 1)
 
     if (f == 0) {
       continue;
