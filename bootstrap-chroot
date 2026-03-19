@@ -1,0 +1,246 @@
+#!/bin/bash
+#
+# bootstrap-chroot - bootstrap a chroot environment
+# Copyright (C) 2026 notweerdmonk
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
+# SOFTWARE.
+#
+
+## @file bootstrap-chroot
+## @author notweerdmonk
+## @brief Bootstrap a chroot enviroment.
+## 
+## Copy binaries and associated libraries. Mount/unmount necessary directories.
+##
+## Features bash completion with (de)registration.
+
+# Name of this script
+scriptname="$(basename "${BASH_SOURCE[0]}")"
+scriptpath="$(realpath $scriptname)"
+
+# Courtesy: mklement0 via Stack Overflow
+# https://stackoverflow.com/a/28776166
+# https://stackoverflow.com/users/45375/mklement0
+function is_sourced {
+  case ${0##*/} in bash|-bash) return 0;; esac
+  return 1  # NOT sourced.
+}
+
+is_sourced && sourced=1 || sourced=0
+
+# !!! CAUTION !!! DO NOT EDIT THESE VARIABLES !!! CAUTION !!!
+# Completion function for the command 'bash'
+bash_completion_func=_longopt
+# !!! CAUTION !!! DO NOT EDIT THESE VARIABLES !!! CAUTION !!!
+# Completion options for the command 'bash'
+bash_completion_opts=
+# !!! CAUTION !!! DO NOT EDIT THESE VARIABLES !!! CAUTION !!!
+
+# Restore original bash completion function and options iff this script is
+# sourced
+[[ $sourced -gt 0 && -n $1 ]] && \
+  {
+    [[ $1 == restore ]] && \
+      { 
+        [[ -n $bash_completion_func ]] && \
+          complete -r "$scriptname" && \
+          complete $bash_completion_opts -F $bash_completion_func bash 2>/dev/null && \
+          sed -i -r "s/^(bash_completion_func=)(.*)/\1/" "$scriptpath" && \
+          sed -i -r "s/^(bash_completion_opts=)(.*)/\1/" "$scriptpath"
+        return 0
+      } || \
+      {
+        echo "Usage: source $scriptname [restore]"
+        return 1
+      }
+  }
+
+# Register bash completion iff this script is sourced
+if [[ $sourced -gt 0 ]]
+then
+
+  # Store the original completion function for the command 'bash'
+  bash_completions="$(complete -p bash | grep -Po "(?<=complete ).*(?= bash)")"
+  echo $bash_completions
+  
+  [[ -z $bash_completion_func ]] && \
+    bash_completion_func="$(echo "$bash_completions" | grep -Po "(?<=-F )[^ ]+")" && \
+    bash_completion_opts="${bash_completions/-F*$bash_completion_func/}" && \
+    {
+      sed -i -r "s/^(bash_completion_func=)/\1$bash_completion_func/" "$scriptpath"
+      sed -i -r "s/^(bash_completion_opts=)/\1$bash_completion_opts/" "$scriptpath"
+    }
+  
+  # Bash completions for this script
+  completion_func_name=__${scriptname/ /_}_completion
+  
+  eval "function $completion_func_name {
+    local args=(copy mount unmount)
+    local cur=\${COMP_WORDS[COMP_CWORD]}
+    local prev=\${COMP_WORDS[COMP_CWORD-1]}
+    
+    [[ \"\$prev\" == \"bash\" ]] && \$bash_completion_func && return 0
+  
+    compopt +o nospace
+    [[ \"\${prev##*/}\" == \"$scriptname\" ]] && \
+      COMPREPLY=(\$(compgen -W \"\${args[*]}\" -- \$cur)) || \
+      {
+        local match_result=(\${args[@]/\$prev/})
+        [[ \${#match_result[@]} -ne \${#args[@]} ]] && \
+          {
+            [[ ! \"\$1\" =~ ^.*bash$ ]] && return 0 || \
+              compopt -o nospace && \
+              COMPREPLY=(\$(compgen -d -S / -- \$cur)) && \
+              return 0
+          }
+  
+        COMPREPLY=(\$(compgen -c -- \$cur))
+      }
+  }"
+  complete -o dirnames -F $completion_func_name "$scriptname"
+  
+  # Completion for the command 'bash'
+  complete $bash_completion_opts -F $completion_func_name bash
+
+  # Return from this point if this script is being sourced
+  return 0
+fi
+
+# Check for required arguments
+if [ $# -lt 2 ]; then
+  echo "Usage: $0 <mount|unmount|copy> <directory_path> [binary]..."
+  exit 1
+fi
+
+action=$1
+directory="$2"
+
+shift 2
+
+# Common binaries
+binaries=(bash awk file grep sed ls cat tr cut)
+binaries_len=${#binaries[@]}
+
+while [[ $# -gt 0 ]]
+do
+  local element="$1"
+  local match_result=(${binaries[@]/"$element"/})
+  [[ ${#match_result[@]} -eq $binaries_len ]] && \
+    binaries+=("$element") && ((binaries_len++))
+  shift
+done
+
+# Function to copy binaries and libs into chroot environment
+function copy_binaries_and_libs {
+  # Create necessary directories
+  mkdir -p "$directory"/{bin,etc,lib,lib64,usr,dev,sys,proc}
+  mkdir -p "$directory"/dev/shm
+
+  # Copy essential binaries (modify the list as needed)
+
+  local did_copy=0
+  for binary in "${binaries[@]}"
+  do
+    local binary_path="$(which "$binary")"
+    [[ ! -f "$directory/bin/$binary" ]] && \
+      echo "Copying $binary_path to $directory/bin/" && \
+      cp "$binary_path" "$directory/bin/" && \
+      [[ $did_copy -eq 0 ]] && did_copy=1
+
+    # Copy required libraries for bash
+    local libs="$(ldd "$binary_path" | awk '{print $3}' | grep '^/' | sort -u)"
+    for lib in $libs
+    do
+      [[ ! -f "$directory/${lib##/}" ]] && \
+        echo Copying "$lib" && \
+        cp --parents "$lib" "$directory"
+    done
+  done
+
+  [[ $did_copy -gt 0 ]] && \
+    echo "Copied binaries and libraries to $directory"
+}
+
+# Function to setup mount points in chroot environment
+function mount_chroot {
+  # Bind mount /dev
+  local mounted="$(findmnt "$directory/dev" -n -o TARGET,FSTYPE)"
+  [[ "${mounted##* }" == devtmpfs ]] && \
+    echo "$directory/dev already mounted with type devtmpfs" || \
+    {
+      echo "Bind mouting /dev to $directory/dev" && \
+        mount --bind /dev "$directory/dev"
+    }
+
+  # Bind mount /dev/shm
+  mounted="$(findmnt "$directory/dev/shm" -n -o TARGET,FSTYPE)"
+  [[ "${mounted##* }" == tmpfs ]] && \
+    echo "$directory/dev/shm already mounted with type tmpfs" || \
+    {
+      echo "Mouting tmpfs to $directory/dev/shm" && \
+        mount -t tmpfs tmpfs "$directory/dev/shm"
+    }
+
+  # Bind mount /sys
+  mounted="$(findmnt "$directory/sys" -n -o TARGET,FSTYPE)"
+  [[ "${mounted##* }" == sysfs ]] && \
+    echo "$directory/sys already mounted with type sysfs" || \
+    {
+      echo "Bind mouting /sys to $directory/sys" && \
+        mount --bind /sys "$directory/sys"
+    }
+
+  # Bind mount /proc
+  mounted="$(findmnt "$directory/proc" -n -o TARGET,FSTYPE)"
+  [[ "${mounted##* }" == proc ]] && \
+    echo "$directory/proc already mounted with type proc" || \
+    {
+      echo "Bind mouting /proc to $directory/proc" && \
+        mount --bind /proc "$directory/proc"
+    }
+
+  echo "Chroot environment mounted at $directory."
+}
+
+# Function to clean up the chroot environment
+function unmount_chroot {
+  umount "$directory/proc"
+  umount "$directory/sys"
+  umount "$directory/dev/shm"
+  umount "$directory/dev"
+
+  echo "Chroot environment unmounted from $directory."
+}
+
+# Execute based on the action
+case $action in
+  mount)
+    mount_chroot
+    ;&
+  copy)
+    copy_binaries_and_libs
+    ;;
+  unmount)
+    unmount_chroot
+    ;;
+  *)
+    echo "Invalid action: $action. Use 'copy' or 'mount' or 'unmount'."
+    exit 1
+    ;;
+esac
