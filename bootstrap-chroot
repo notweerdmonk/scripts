@@ -46,10 +46,16 @@ is_sourced && sourced=1 || sourced=0
 
 # !!! CAUTION !!! DO NOT EDIT THESE VARIABLES !!! CAUTION !!!
 # Completion function for the command 'bash'
-bash_completion_func=_longopt
+bash_completion_func=
 # !!! CAUTION !!! DO NOT EDIT THESE VARIABLES !!! CAUTION !!!
 # Completion options for the command 'bash'
 bash_completion_opts=
+# !!! CAUTION !!! DO NOT EDIT THESE VARIABLES !!! CAUTION !!!
+# Completion function for the command 'sudo'
+sudo_completion_func=
+# !!! CAUTION !!! DO NOT EDIT THESE VARIABLES !!! CAUTION !!!
+# Completion options for the command 'sudo'
+sudo_completion_opts=
 # !!! CAUTION !!! DO NOT EDIT THESE VARIABLES !!! CAUTION !!!
 
 # Restore original bash completion function and options iff this script is
@@ -58,11 +64,17 @@ bash_completion_opts=
   {
     [[ $1 == restore ]] && \
       { 
+        complete -r "$scriptname" && \
+        complete -r bash
+        complete -r sudo
         [[ -n $bash_completion_func ]] && \
-          complete -r "$scriptname" && \
           complete $bash_completion_opts -F $bash_completion_func bash 2>/dev/null && \
           sed -i -r "s/^(bash_completion_func=)(.*)/\1/" "$scriptpath" && \
           sed -i -r "s/^(bash_completion_opts=)(.*)/\1/" "$scriptpath"
+        [[ -n $sudo_completion_func ]] && \
+          complete $sudo_completion_opts -F $sudo_completion_func sudo 2>/dev/null && \
+          sed -i -r "s/^(sudo_completion_func=)(.*)/\1/" "$scriptpath" && \
+          sed -i -r "s/^(sudo_completion_opts=)(.*)/\1/" "$scriptpath"
         return 0
       } || \
       {
@@ -76,9 +88,8 @@ if [[ $sourced -gt 0 ]]
 then
 
   # Store the original completion function for the command 'bash'
-  bash_completions="$(complete -p bash | grep -Po "(?<=complete ).*(?= bash)")"
-  echo $bash_completions
-  
+  bash_completions="$(complete -p bash 2>/dev/null | grep -Po "(?<=complete ).*(?= bash)")"
+
   [[ -z $bash_completion_func ]] && \
     bash_completion_func="$(echo "$bash_completions" | grep -Po "(?<=-F )[^ ]+")" && \
     bash_completion_opts="${bash_completions/-F*$bash_completion_func/}" && \
@@ -86,17 +97,29 @@ then
       sed -i -r "s/^(bash_completion_func=)/\1$bash_completion_func/" "$scriptpath"
       sed -i -r "s/^(bash_completion_opts=)/\1$bash_completion_opts/" "$scriptpath"
     }
-  
+
+  # Store the original completion function for the command 'sudo'
+  sudo_completions="$(complete -p sudo 2>/dev/null | grep -Po "(?<=complete ).*(?= sudo)")"
+
+  [[ -z $sudo_completion_func ]] && \
+    sudo_completion_func="$(echo "$sudo_completions" | grep -Po "(?<=-F )[^ ]+")" && \
+    sudo_completion_opts="${sudo_completions/-F*$sudo_completion_func/}" && \
+    {
+      sed -i -r "s/^(sudo_completion_func=)/\1$sudo_completion_func/" "$scriptpath"
+      sed -i -r "s/^(sudo_completion_opts=)/\1$sudo_completion_opts/" "$scriptpath"
+    }
+
   # Bash completions for this script
   completion_func_name=__${scriptname/ /_}_completion
-  
+
   eval "function $completion_func_name {
     local args=(copy mount unmount)
     local cur=\${COMP_WORDS[COMP_CWORD]}
     local prev=\${COMP_WORDS[COMP_CWORD-1]}
-    
-    [[ \"\$prev\" == \"bash\" ]] && \$bash_completion_func && return 0
-  
+
+    [[ \"\$prev\" =~ ^.*/bash$|^bash$ ]] && \$bash_completion_func && return 0
+    [[ \"\$prev\" == \"sudo\" ]] && \$sudo_completion_func && return 0
+
     compopt +o nospace
     [[ \"\${prev##*/}\" == \"$scriptname\" ]] && \
       COMPREPLY=(\$(compgen -W \"\${args[*]}\" -- \$cur)) || \
@@ -104,19 +127,22 @@ then
         local match_result=(\${args[@]/\$prev/})
         [[ \${#match_result[@]} -ne \${#args[@]} ]] && \
           {
-            [[ ! \"\$1\" =~ ^.*bash$ ]] && return 0 || \
+            [[ \"\$1\" =~ ^.*/bash$|^bash$ || \"\$1\" =~ sudo ]] && \
               compopt -o nospace && \
-              COMPREPLY=(\$(compgen -d -S / -- \$cur)) && \
-              return 0
+              COMPREPLY=(\$(compgen -d -S / -- \$cur))
+            return 0
           }
-  
+
         COMPREPLY=(\$(compgen -c -- \$cur))
       }
   }"
   complete -o dirnames -F $completion_func_name "$scriptname"
-  
+
   # Completion for the command 'bash'
   complete $bash_completion_opts -F $completion_func_name bash
+
+  # Completion for the command 'sudo'
+  complete $sudo_completion_opts -F $completion_func_name sudo
 
   # Return from this point if this script is being sourced
   return 0
@@ -139,8 +165,8 @@ binaries_len=${#binaries[@]}
 
 while [[ $# -gt 0 ]]
 do
-  local element="$1"
-  local match_result=(${binaries[@]/"$element"/})
+  element="$1"
+  match_result=(${binaries[@]/"$element"/})
   [[ ${#match_result[@]} -eq $binaries_len ]] && \
     binaries+=("$element") && ((binaries_len++))
   shift
@@ -164,7 +190,7 @@ function copy_binaries_and_libs {
       [[ $did_copy -eq 0 ]] && did_copy=1
 
     # Copy required libraries for bash
-    local libs="$(ldd "$binary_path" | awk '{print $3}' | grep '^/' | sort -u)"
+    local libs="$(ldd "$binary_path" | grep -o '/[^ ]*' | sort -u)"
     for lib in $libs
     do
       [[ ! -f "$directory/${lib##/}" ]] && \
