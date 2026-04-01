@@ -8,6 +8,7 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 - [DecompileVariables.py](DecompileVariables.py)
 - [bootstrap-chroot](bootstrap-chroot)
+- [bgtimer](bgtimer)
 - [const.py](const.py)
 - [cscope-setup](cscope-setup)
 - [find_main.py](find_main.py)
@@ -39,6 +40,17 @@ Ghidra script that walks the program's `.data` segment, inspects typed data item
 Bash utility to bootstrap a chroot by copying selected binaries and their shared libraries, then mounting or unmounting required pseudo-filesystems. When sourced, it also registers shell completion.
 
 Dependencies visible from the script: `bash`, `realpath`, `complete`, `which`, `ldd`, `findmnt`, `mount`, `umount`, `cp`, `mkdir`, `sed`.
+
+### [bgtimer](bgtimer)
+
+Background timer utility. When sourced in a shell, it registers a SIGUSR1 handler that executes a command on timeout. As an executable, it starts a background timer process that sends SIGUSR1 to a target shell after a specified time (RFC 2822 or ISO 8601 format).
+
+The script determines its name dynamically and can be renamed; functionality remains intact.
+
+Command to set timer: `source bgtimer <command>`
+Command to modify timer command: `source bgtimer command <new_command>`
+Command to cleanup: `source bgtimer cleanup`
+Executable usage: `./bgtimer <pid> <time>`
 
 ### [const.py](const.py)
 
