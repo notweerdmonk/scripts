@@ -1,0 +1,98 @@
+#!/bin/bash
+#
+# bgtimer - background timer
+# Copyright (C) 2026 notweerdmonk
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
+# SOFTWARE.
+#
+
+## @file bgtimer
+## @author notweerdmonk
+## @brief Register SIGUSR1 handler in a shell to execute a command and start a
+## timer.
+##
+## Register/derigister signal handler. Command(s) to be executed on timeout are
+## stored in BACKGROUND_TASK_TIMER_CMD environment variable and can be modified.
+##
+## PID of the target shell is required to start the timer. Time can be provided
+## in RFC 2822 or ISO 8601 formats.
+
+# Name of this script
+scriptname="$(basename "${BASH_SOURCE[0]}")"
+scriptpath="$(realpath $scriptname)"
+
+# Courtesy: mklement0 via Stack Overflow
+# https://stackoverflow.com/a/28776166
+# https://stackoverflow.com/users/45375/mklement0
+function is_sourced {
+  case ${0##*/} in bash|-bash) return 0;; esac
+  return 1  # NOT sourced.
+}
+
+is_sourced && sourced=1 || sourced=0
+
+# (De)register SIGUSR1 handler or modify timer command
+[[ $sourced -gt 0 ]] && \
+  {
+    {
+      [[ -z "$1" || $1 == help ]] && \
+      echo "Usage: source ${BASH_SOURCE[0]} <cmd>" >> /dev/stderr && \
+      return 1
+    } ||
+    [[ $1 == command ]] && export BACKGROUND_TASK_TIMER_CMD="$2" || \
+      {
+        trap_handler_name=__"${scriptname/ /_}"_sigusr1_trap
+        [[ $1 == cleanup ]] && \
+          trap - SIGUSR1 && \
+          unset $trap_handler_name && \
+          unset BACKGROUND_TASK_TIMER_CMD && \
+          return 1 || \
+          {
+            eval "function $trap_handler_name {
+              cmd=\"\$BACKGROUND_TASK_TIMER_CMD\"
+              [[ -z \$cmd ]] && cmd=\"\$@\"
+              [[ -n \$cmd ]] && eval \"\$cmd\"
+            }"
+            declare -f $trap_handler_name && \
+            export BACKGROUND_TASK_TIMER_CMD="$1" && \
+            trap "$trap_handler_name \"$1\"" SIGUSR1 && \
+            echo "Registered $trap_handler_name for SIGUSR1"
+          }
+      }
+    return 0
+  }
+
+# Arguments not provided
+[[ $# -lt 2 ]] && \
+  echo "Usage: $0 <pid> <time (RFC 2822 or ISO 8601)>" >> /dev/stderr && \
+  exit 1
+
+target_pid="$1"
+time="$2"
+
+# Background timer
+while [[ $(date +%s) -lt $(date -d "$time" +%s) ]]; do sleep 1; done && \
+  kill -SIGUSR1 "$target_pid" &
+
+timer_pid="$!"
+
+echo \
+"Timer started till time: $time "\
+"for shell: $target_pid "\
+"with pid: $timer_pid"
