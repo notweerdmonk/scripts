@@ -52,7 +52,7 @@ is_sourced && sourced=1 || sourced=0
   {
     {
       [[ -z "$1" || $1 == help ]] && \
-      echo "Usage: source ${BASH_SOURCE[0]} <cmd>" >> /dev/stderr && \
+      echo "Usage: source ${BASH_SOURCE[0]} (cleanup | command COMMAND ... | COMMAND ...)" >> /dev/stderr && \
       return 1
     } ||
     [[ $1 == command ]] && export BACKGROUND_TASK_TIMER_CMD="$2" || \
@@ -80,7 +80,7 @@ is_sourced && sourced=1 || sourced=0
 
 # Arguments not provided
 [[ $# -lt 2 ]] && \
-  echo "Usage: $0 <pid> <time (RFC 2822 or ISO 8601)>" >> /dev/stderr && \
+  echo -e "Usage: $0 (pid) (time)\n\tpid\t\tshell PID\n\ttime\t\tRFC 2822 or ISO 8601 timestamp\nSource script to (de)register SIGUSR1 handler with timer command(s)" >> /dev/stderr && \
   exit 1
 
 target_pid="$1"
