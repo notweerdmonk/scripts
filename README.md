@@ -16,6 +16,7 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 - [projects.sh](projects.sh)
 - [rattles](rattles)
 - [scrape-imgur-album](scrape-imgur-album)
+- [slack-closet](slack-closet)
 - [snakecase](snakecase)
 - [syncp4repo](syncp4repo)
 - [wallpaper.sh](wallpaper.sh)
@@ -87,6 +88,11 @@ Dependencies visible from the script: `tput`, `sleep`, `realpath`, `infocmp`, `g
 Bash script that resolves media URLs from an Imgur album and downloads each item with `curl`. It supports either a supplied Imgur client ID or a built-in API path.
 
 Dependencies visible from the script: `curl`, `python`.
+
+### [slack-closet](slack-closet)
+
+Smol (303 lines, see [other](https://media1.tenor.com/m/CzbOTB8R8OYAAAAd/otters-otter.gif)), over-caffeinated key-value vault built on SQLite; it auto-routes keys into users, channels, messages, or message threads, validates the timestamp keys, uses `jq` to make sure message JASON isn’t lying, and lets you `put`, `get`, `get-all`, `list`, `search`, and `upsert` like a command-line librarian with trust issues. The WAL mode is there so the database can be a bit more concurrency-friendly, and the whole thing behaves like a structured spreadsheet that got a university degree in regex. Does or does not make you more productive, just does not try.
+
 
 ### [snakecase](snakecase)
 
