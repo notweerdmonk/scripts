@@ -11,6 +11,7 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 - [bootstrap-chroot](bootstrap-chroot)
 - [const.py](const.py)
 - [cscope-setup](cscope-setup)
+- [editplaylist](editplaylist)
 - [find_main.py](find_main.py)
 - [newfile.sh](newfile.sh)
 - [projects.sh](projects.sh)
@@ -72,6 +73,14 @@ Tiny Python module that replaces itself with a write-once constant container obj
 ### [cscope-setup](cscope-setup)
 
 Build helper for C/C++ trees. With `start`, it generates `cscope.files`, then creates a recursive `cscope` database if `cscope` is installed.
+
+### [editplaylist](editplaylist)
+
+Bash utility that adds song entries (title, artist, URL) to a playlist file. With --embed/-e it rewrites only the content between ===playlist=== markers. Without -e the whole file is treated as a plain playlist and reformatted; do not run it without -e on a marked file, since the ===playlist=== markers would be folded into the table as data rows and the marker structure lost (the script now refuses instead). Entries are de-duplicated, sorted, and rendered as a table by [`tabulate.awk`](tabulate.awk). Supports interactive prompts and optional per-file metadata verbosity.
+
+Options: `-p/--playlist`, `-t/--title`, `-a/--artist`, `-u/--url`, `-e/--embed`, `-i/--interactive`, `-v/--verbosity`, `-h/--help`.
+
+Dependencies visible from the script: `bash`, `getopt` (util-linux), `sed`, `sort`, `uniq`, `awk` (GNU), `sponge` (moreutils), plus [`tabulate.awk`](tabulate.awk).
 
 ### [find_main.py](find_main.py)
 

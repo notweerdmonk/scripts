@@ -1,0 +1,392 @@
+#!/usr/bin/env bash
+
+# This is free and unencumbered software released into the public domain.
+# 
+# Anyone is free to copy, modify, publish, use, compile, sell, or
+# distribute this software, either in source code form or as a compiled
+# binary, for any purpose, commercial or non-commercial, and by any
+# means.
+# 
+# In jurisdictions that recognize copyright laws, the author or authors
+# of this software dedicate any and all copyright interest in the
+# software to the public domain. We make this dedication for the benefit
+# of the public at large and to the detriment of our heirs and
+# successors. We intend this dedication to be an overt act of
+# relinquishment in perpetuity of all present and future rights to this
+# software under copyright law.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+# 
+# For more information, please refer to <https://unlicense.org/>
+
+# Exit on errors, unset variables, or failed commands in a pipeline.
+set -Eeuo pipefail
+
+# Build the option string expected by GNU getopt.
+# Input format: "longname:arg,longname:noarg"
+make_optstring() {
+  [[ $# -eq 0 ]] && return 0
+
+  local short_opts=""
+  local long_opts=""
+
+  # Parse the comma-separated option definitions.
+  IFS="," read -r -a args <<< "$@"
+  for arg in "${args[@]}"
+  do
+    opt="${arg%%:*}"
+    arg_required="${arg##*:}"
+
+    # An option takes an argument unless marked "noarg" or left unspecified.
+    [[ "$arg_required" == "noarg" || -z "$arg_required" ]] && \
+      arg_required=0 || \
+      arg_required=1
+
+    [[ -n "$long_opts" ]] && long_opts+=","
+
+    # Use the first letter of the long option as its short option.
+    short_opts+="${opt:0:1}"
+    long_opts+="${opt}"
+
+    # A colon marks options that require an argument.
+    [[ $arg_required -ne 0 ]] && \
+      {
+        short_opts+=":"
+        long_opts+=":"
+      }
+  done
+
+  echo "-o -$short_opts -l $long_opts"
+}
+
+# Build and declare an array of formatted option descriptions for the help text.
+# Input format: "longname:arg:Description,longname:noarg:Description"
+make_optsdesc() {
+  [[ $# -eq 0 ]] && return 0
+
+  declare -a optdesc
+  local desc_col_indent=32
+
+  # ANSI escape sequences used to bold option names in the usage output.
+  local bold=$'\x1b[1m'
+  local normal=$'\x1b[0m'
+
+  IFS="," read -r -a args <<< "$@"
+  for arg in "${args[@]}"
+  do
+    local opt="${arg%%:*}"
+    local arg_required="${arg#*:}"
+    arg_required="${arg_required%%:*}"
+    local desc="${arg##*:}"
+
+    local short_opt="${opt:0:1}"
+    local long_opt="${opt}"
+
+    # Display required arguments as =LONGNAME; omit this for flag options.
+    [[ "$arg_required" == "noarg" || -z "$arg_required" ]] && \
+      arg_required="" || \
+      arg_required="=${long_opt^^}"
+
+    local opts="-$short_opt, --$long_opt"
+
+    # Set a tab-stop-aligned column for the option descriptions.
+    local desc_col_width=$((${#opts} + ${#arg_required}))
+    [[ $desc_col_width -ge $desc_col_indent ]] && \
+      {
+        desc_col_indent=$((($desc_col_width / 8) * 8))
+        [[ $(($desc_col_width % 8)) -ge 0 ]] && \
+          desc_col_indent=$(($desc_col_indent + 8))
+      }
+
+    # Format one option and its description, then add it to the array.
+    local descline
+    descline="$(
+      printf -- "\t%s%s%s%s%*s%s" \
+        "$bold" "$opts" "$normal" "$arg_required" \
+        $(($desc_col_indent - $desc_col_width)) " " "$desc"
+    )"
+
+    optdesc+=("$descline")
+
+    unset arg_required
+  done
+
+  # Emit a declaration that can be evaluated to create the array in the caller.
+  declare -p optdesc
+}
+
+# Print the script's usage instructions and available options.
+print_usage() {
+  declare -n optdesc_name="$2"
+
+  local bold=$'\x1b[1m'
+  local normal=$'\x1b[0m'
+
+  printf "%s - add URLs to playlist\n\n" "$1"
+  printf "USAGE\n"
+  printf "\t%s [OPTION]...\n\n" "$1"
+  printf "OPTIONS\n"
+  for desc in "${optdesc_name[@]}"
+  do
+    printf "%s\n" "$desc"
+  done
+  printf "\n"
+}
+
+# Resolve the script's filename and directory.
+scriptname="$(basename "${BASH_SOURCE[0]}")"
+scriptdir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+
+# Define the command-line options and their argument requirements.
+optstring_input="playlist:arg,"\
+"title:arg,"\
+"artist:arg,"\
+"url:arg,"\
+"embed:noarg,"\
+"interactive:noarg,"\
+"verbosity:arg,"\
+"help:noarg"
+
+# Convert option definitions into the format used by getopt.
+optstring="$(make_optstring "$optstring_input")"
+
+# Define the help text for each option and create the optdesc array.
+optdesc_input="playlist:arg:Playlist file,"\
+"title:arg:Song title,"\
+"artist:arg:Artist,"\
+"url:arg:URL,"\
+"embed:noarg:Edit playlist in-place,"\
+"interactive:noarg:Interactive prompts,"\
+"verbosity:arg:Show verbose messages,"\
+"help:noarg:Display this message"
+
+eval "$(make_optsdesc $optdesc_input)"
+
+# Parse the command-line options. On failure, show usage and return getopt's
+# exit status.
+if opts=$(getopt $optstring -n "$scriptname" -- "$@")
+then
+  eval set -- "$opts"
+else
+  status=$?
+  [[ -v DEBUG && $DEBUG -ge 2 ]] && \
+  printf "getopt failed (exit status %d)\n" "$status" >&2
+  printf "\n" >&2
+  print_usage "$scriptname" optdesc >&2
+  exit $status
+fi
+
+# Assign option values to variables.
+while true; do
+  case "$1" in
+    -p|--playlist)
+      playlist="$2"
+      shift 2
+      ;;
+    -t|--title)
+      shift
+      title=""
+      # Allow a title to span multiple command-line words until another option.
+      while [[ ! "$1" =~ ^-{1,2}[^-]*$ ]]
+      do
+        [[ -n "$title" ]] && title+=" "
+        title+="$1"
+        shift
+      done
+      ;;
+    -a|--artist)
+      shift
+      artist=""
+      # Allow an artist name to span multiple command-line words.
+      while [[ ! "$1" =~ ^-{1,2}[^-]*$ ]]
+      do
+        [[ -n "$artist" ]] && artist+=" "
+        artist+="$1"
+        shift
+      done
+      ;;
+    -u|--url)
+      shift
+      url=""
+      # Allow a URL value to span multiple command-line words.
+      while [[ ! "$1" =~ ^-{1,2}[^-]*$ ]]
+      do
+        [[ -n "$url" ]] && url+=" "
+        url+="$1"
+        shift
+      done
+      ;;
+    -e|--embed)
+      embed=1
+      shift
+      ;;
+    -i|--interactive)
+      interactive=1
+      shift
+      ;;
+    -v|--verbosity)
+      shift
+      [[ "$1" =~ v+ ]] && verbosity=${#1} && shift || verbosity=0
+      ;;
+    -h|--help)
+      print_usage "$scriptname" optdesc
+      exit
+      ;;
+    --)
+      # End of options; discard the marker and leave the parsing loop.
+      shift
+      break
+      ;;
+    *)
+      # No more recognized options.
+      break
+      ;;
+  esac
+done
+
+# Prompt for all playlist fields when interactive mode is enabled.
+[[ -v interactive && -n "$interactive" ]] && \
+  {
+    read -p "Enter playlist file"$'\t'": " playlist
+    read -p "Enter title title"$'\t'": " title
+    read -p "Enter artist(s)"$'\t\t'": " artist
+    read -p "Enter URL"$'\t\t'": " url
+  }
+
+# Require a nonempty value for each of the four playlist fields.
+[[
+  ! -v playlist || -z "$playlist" ||
+  ! -v title    || -z "$title" ||
+  ! -v artist   || -z "$artist" ||
+  ! -v url      || -z "$url"
+]] && print_usage "$scriptname" optdesc && exit 1
+
+# Check for sponge only after handling help and validating the inputs.
+# sponge is used below to safely replace the playlist file's contents.
+check_dep_tool() {
+  [[ -z "$1" ]] && return 255
+  if ! command -v "$1" >/dev/null 2>&1;
+  then
+    printf "%s: required tool '%s' was not found; " \
+      "$scriptname" "$1" >&2
+    printf "install moreutils\n" >&2
+    exit 1
+  fi
+}
+
+check_dep_tool "sponge"
+
+# Match table header/separator rows so they can be removed before processing.
+sed_pattern='/^|\([[:space:]]*Song[[:space:]]*\|[[:space:]]*'\
+'Artist[[:space:]]*\|[[:space:]]*URL\|[[:space:]]*-\+\)/d'
+
+# Extract the content between playlist markers, omitting the markers and
+# table header/separator rows.
+playlist_content() {
+    sed -n '/^===playlist===$/,/^===playlist===$/p' "$1" | \
+      sed '/^===playlist===$/d' | \
+      sed "$sed_pattern"
+}
+
+# Replace the content between playlist markers with the contents of the named
+# shell variable. The temporary pipeline output is written back using sponge.
+replace_playlist_content() {
+  [[ -z "$1" ]] && return 255
+  [[ -z "$2" ]] && return 255
+
+  # Treat the second argument as the name of a variable in the caller.
+  declare -n content_var="$2"
+
+  printf "%s\n" "${content_var}" | awk '
+# Read replacement content from standard input and store nonempty lines.
+FILENAME == "-" {
+  if (length($0)) {
+    content = content $0 ORS
+  }
+  next
+}
+# Initialize state and split the replacement content before reading the file.
+BEGINFILE {
+  playlist_content = 0
+  num_content_lines = split(content, content_arr, /\n/)
+  content_line = 1
+  if (!length(content_arr[num_content_lines])) {
+    delete content_arr[num_content_lines--]
+  }
+}
+
+# Toggle playlist-content mode at each marker; print the opening marker.
+ /^===playlist===$/ {
+  playlist_content = xor(playlist_content, 1)
+  if (playlist_content) print $0
+}
+
+{
+  if (playlist_content) {
+    # Replace original playlist lines with the new content, if available.
+    if (content_line <= num_content_lines) {
+      print content_arr[content_line++]
+    }
+  } else {
+    # Preserve all lines outside the playlist section.
+    print $0
+  }
+}
+' - "$1" | sponge "$1"
+}
+
+# Print a confirmation showing the playlist file and the added song details.
+# When verbose mode is enabled, also display basic metadata for the playlist.
+success() {
+  printf "Added to playlist %s:\n\t%s - %s\n\t%s\n" \
+    "$playlist" "$title" "$artist" "$url"
+
+  # Show file metadata only when verbose mode is set to a positive value.
+  [[ -v verbosity && $verbosity -gt 0 ]] && \
+  stat --printf="File:\t\t%n\nType:\t\t%F\nOwner:\t\t%U\nModified:\t%y\n" \
+    "$playlist"
+  return 0
+}
+
+# In embed mode, combine existing playlist entries with the new entry,
+# de-duplicate and sort them, format them as a table, then replace the
+# content between the playlist markers.
+[[ -v embed && $embed -gt 0 ]] && \
+  {
+    new_content="$(
+      echo "$(
+        playlist_content "$playlist";
+        printf "%s | %s | %s" "$title" "$artist" "$url"
+      )" | \
+      sort -u | \
+      awk -f "$scriptdir"/tabulate.awk Song Artist URL | \
+      uniq
+    )"
+    replace_playlist_content "$playlist" new_content
+    :
+  } || \
+  {
+    # A marked playlist must be edited with -e; otherwise the markers get
+    # reformatted into the table. Refuse rather than silently corrupt the file.
+    [[ -e "$playlist" ]] && grep -q '^===playlist===$' "$playlist" && \
+      {
+        printf "%s: %s has ===playlist=== markers; use -e/--embed\n" \
+          "$scriptname" "$playlist" >&2
+        exit 1
+      }
+    # Otherwise, append the new entry, then sort, format, and rewrite the file.
+    printf "%s | %s | %s" "$title" "$artist" "$url" >> "$playlist"
+    sed "$sed_pattern" "$playlist" | \
+      sort -u | \
+      awk -f "$scriptdir"/tabulate.awk Song Artist URL | \
+      uniq | \
+      sponge "$playlist"
+  }
+
+success
