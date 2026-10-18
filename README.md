@@ -44,14 +44,25 @@ Dependencies visible from the script: `bash`, `realpath`, `complete`, `which`, `
 
 ### [bgtimer](bgtimer)
 
-Background timer utility. When sourced in a shell, it registers a SIGUSR1 handler that executes a command on timeout. As an executable, it starts a background timer process that sends SIGUSR1 to a target shell after a specified time (RFC 2822 or ISO 8601 format).
+Background timer utility. Sourced into a shell, it registers a SIGUSR1 action that runs a command when a timer fires. Run as an executable, it starts a background timer that signals a target shell at a given time or after a delay.
 
 The script determines its name dynamically and can be renamed; functionality remains intact.
 
-Command to set timer: `source bgtimer <command>`
-Command to modify timer command: `source bgtimer command <new_command>`
-Command to cleanup: `source bgtimer cleanup`
-Executable usage: `./bgtimer <pid> <time>`
+Sourced usage:
+- `source bgtimer <command>` — register the action and store the command
+- `source bgtimer command <cmd>` — change the stored command
+- `source bgtimer -p [cmd|-]` — register using a FIFO + SIGWINCH wakeup instead of SIGUSR1; the action runs in a detached reader process, avoiding polling
+- `source bgtimer disarm|disable|cancel` — deregister the action
+- `source bgtimer help` — show sourced usage
+
+Executable usage:
+- `bgtimer <time> <pid>` — fire at an RFC 2822 or ISO 8601 timestamp
+- `bgtimer -d <seconds> <pid>` — fire after a number of seconds
+- `bgtimer -c <pid>` — cancel a running timer
+
+The command to run on timeout is stored in the `BACKGROUND_TASK_TIMER_CMD` environment variable; `-` selects the default `tput bel`.
+
+Dependencies visible from the script: `bash`, `basename`, `realpath`, `date`, `mkfifo`, `sed`, `trap`, `kill`, `sleep`, `tput`.
 
 ### [const.py](const.py)
 

@@ -35,7 +35,7 @@
 
 # Name of this script
 scriptname="$(basename "${BASH_SOURCE[0]}")"
-scriptpath="$(realpath $scriptname)"
+scriptpath="$(realpath "$scriptname")"
 
 # Courtesy: mklement0 via Stack Overflow
 # https://stackoverflow.com/a/28776166
@@ -52,47 +52,184 @@ is_sourced && sourced=1 || sourced=0
   {
     {
       [[ -z "$1" || $1 == help ]] && \
-      echo "Usage: source ${BASH_SOURCE[0]} (cleanup | command COMMAND ... | COMMAND ...)" >> /dev/stderr && \
-      return 1
+        {
+          echo    "  Usage: source $(basename ${BASH_SOURCE[0]}) <cmd>" >&2
+          echo >&2
+          echo    "  Source script to (de)register SIGUSR1 action with timer commands" >&2
+          echo >&2
+          echo    "  Arguments" >&2
+          echo >&2
+          echo -e "\tcommand\t\tModify the command carried out by the timer" >&2
+          echo >&2
+          echo -e "\tdisarm\t\tDeregister timer handler from current shell" >&2
+          echo -e "\tdisable" >&2
+          echo -e "\tcancel" >&2
+          echo >&2
+          return 0
+        }
     } ||
-    [[ $1 == command ]] && export BACKGROUND_TASK_TIMER_CMD="$2" || \
+    [[ "$1" == command ]] && export BACKGROUND_TASK_TIMER_CMD="$2" || \
       {
         trap_handler_name=__"${scriptname/ /_}"_sigusr1_trap
-        [[ $1 == cleanup ]] && \
-          trap - SIGUSR1 && \
-          unset $trap_handler_name && \
-          unset BACKGROUND_TASK_TIMER_CMD && \
-          return 1 || \
+        [[ "$1" == disarm || "$1" == disable || "$1" == cancel  ]] && \
           {
-            eval "function $trap_handler_name {
-              cmd=\"\$BACKGROUND_TASK_TIMER_CMD\"
-              [[ -z \$cmd ]] && cmd=\"\$@\"
-              [[ -n \$cmd ]] && eval \"\$cmd\"
-            }"
-            declare -f $trap_handler_name && \
-            export BACKGROUND_TASK_TIMER_CMD="$1" && \
-            trap "$trap_handler_name \"$1\"" SIGUSR1 && \
-            echo "Registered $trap_handler_name for SIGUSR1"
-          }
+            FIFO="/tmp/bash_wakeup_pipe_$$"
+            BGTIMER_STORAGE="/dev/shm/bgtimer_storage_$$"
+            [[ -n "$BGTIMER_READER_PID" ]] && kill "$BGTIMER_READER_PID" 2>/dev/null
+            unset BGTIMER_READER_PID
+            [[ -f "$BGTIMER_STORAGE" ]] && \
+              {
+                read -r PREV_SIGWINCH_ACTION < <(cat "$BGTIMER_STORAGE")
+                trap "${PREV_SIGWINCH_ACTION:--}" SIGWINCH
+                rm -f "$BGTIMER_STORAGE"
+              }
+            rm -f "$FIFO"
+            trap - SIGUSR1
+            unset "$trap_handler_name"
+            unset BACKGROUND_TASK_TIMER_CMD
+            return 0
+          } || \
+            {
+              [[ "$1" == "-p" ]] && \
+                {
+                  shift
+                  [[ "$1" == - ]] && \
+                      export BACKGROUND_TASK_TIMER_CMD="tput bel" || \
+                      export BACKGROUND_TASK_TIMER_CMD="$1"
+                  FIFO="/tmp/bash_wakeup_pipe_$$"
+                  [[ -n "$BGTIMER_READER_PID" ]] && \
+                    kill "$BGTIMER_READER_PID" 2>/dev/null
+                  rm -f "$FIFO"
+                  mkfifo "$FIFO"
+                  eval "function $trap_handler_name {
+                    cmd=\"\$BACKGROUND_TASK_TIMER_CMD\"
+                    [[ -z \$cmd ]] && cmd=\"\$@\"
+                    [[ -n \$cmd ]] && eval \"\$cmd\"
+                  }"
+                  declare -f "$trap_handler_name"
+                  BGTIMER_STORAGE="/dev/shm/bgtimer_storage_$$"
+                  PREV_SIGWINCH_ACTION=$(trap -p SIGWINCH | sed -E "s/^trap -- '//; s/' SIGWINCH$//; s/'\\\\''/'/g")
+
+                  echo "$PREV_SIGWINCH_ACTION" > "$BGTIMER_STORAGE"
+                  trap "${PREV_SIGWINCH_ACTION:+${PREV_SIGWINCH_ACTION}; }echo -n" SIGWINCH
+                  (
+                    while [[ -p "$FIFO" ]]; do
+                      # This blocks natively inside the OS layer, consuming 0% CPU
+                      read line < "$FIFO" && \
+                        # PUT YOUR ACTUAL COMMAND PAYLOAD HERE
+                        # (e.g., executing scripts, modifying a status, etc.)
+                        "$trap_handler_name" "$1" && \
+                        kill -SIGWINCH $$
+                    done
+                  ) 2>/dev/null &
+                  BGTIMER_READER_PID=$!
+                  disown "$BGTIMER_READER_PID"
+                  echo "Registered alarm for $$"
+                } || \
+                {
+                  BGTIMER_STORAGE="/dev/shm/bgtimer_storage_$$"
+                  PREV_SIGWINCH_ACTION=$(\
+                    trap -p SIGWINCH | \
+                    sed -E "s/^trap -- '//; s/' SIGWINCH$//; s/'\\\\''/'/g"\
+                  )
+                  echo "$PREV_SIGWINCH_ACTION" > "$BGTIMER_STORAGE"
+                  trap "${PREV_SIGWINCH_ACTION:+${PREV_SIGWINCH_ACTION}; }echo -n" SIGWINCH
+                  [[ "$1" == - ]] && \
+                      export BACKGROUND_TASK_TIMER_CMD="tput bel" || \
+                      export BACKGROUND_TASK_TIMER_CMD="$1"
+                  eval "function $trap_handler_name {
+                    cmd=\"\$BACKGROUND_TASK_TIMER_CMD\"
+                    [[ -z \$cmd ]] && cmd=\"\$@\"
+                    [[ -n \$cmd ]] && eval \"\$cmd\"
+                    kill -SIGWINCH $$
+                  }"
+                  declare -f "$trap_handler_name"
+                  trap "$trap_handler_name \"$1\"" SIGUSR1
+                  echo "Registered $trap_handler_name for SIGUSR1"
+                }
+            }
       }
     return 0
   }
 
 # Arguments not provided
 [[ $# -lt 2 ]] && \
-  echo -e "Usage: $0 (pid) (time)\n\tpid\t\tshell PID\n\ttime\t\tRFC 2822 or ISO 8601 timestamp\nSource script to (de)register SIGUSR1 handler with timer command(s)" >> /dev/stderr && \
-  exit 1
+  {
+    scriptname="$(basename "${BASH_SOURCE[0]}")"
+    echo    "  $scriptname - shell background timer" >&2
+    echo >&2
+    echo    "  Source script to (de)register SIGUSR1 action with timer commands" >&2
+    echo >&2
+    echo    "  USAGE" >&2
+    echo -e "\t$scriptname [-c pid]" >&2
+    echo -e "\t$scriptname [-d seconds] pid" >&2
+    echo -e "\t$scriptname time (RFC 2822 or ISO 8601) pid" >&2
+    echo >&2
+    echo    "  OPTIONS" >&2
+    echo -e "\t-c\t\tCancel the timer process with this pid (printed upon start)" >&2
+    echo -e "\t-d\t\tTimer duration from now in seconds" >&2
+    echo >&2
+    exit 0
+  }
 
-target_pid="$1"
-time="$2"
+[[ -n "$1" && "$1" =~ ^-c$ ]] && \
+  {
+    target_pid="$2"
+    [[ "$target_pid" =~ ^[0-9]+$ ]] || \
+      {
+        echo "$scriptname: invalid pid: $target_pid" >&2
+        exit 1
+      }
+    kill "$target_pid"
+    echo "Timer with pid: $target_pid cancelled"
+    exit 0
+  }
+
+[[ -n "$1" && "$1" =~ ^-d$ ]] && \
+  {
+    [[ "$2" =~ ^[0-9]+$ ]] || \
+      {
+        echo "$scriptname: -d requires a non-negative integer of seconds" >&2
+        exit 1
+      }
+    delta="$2"
+    time_till="$(($(date +"%s%N") + $(($delta * 1000000000))))"
+    time="$(date -d @"$(($time_till / 1000000000))")"
+    target_pid="$3"
+  } || \
+  {
+    time="$1"
+    target_pid="$2"
+  }
+
+[[ "$target_pid" =~ ^[0-9]+$ ]] || \
+  {
+    echo "$scriptname: invalid pid: $target_pid" >&2
+    exit 1
+  }
 
 # Background timer
-while [[ $(date +%s) -lt $(date -d "$time" +%s) ]]; do sleep 1; done && \
-  kill -SIGUSR1 "$target_pid" &
+[[ -z "$time_till" ]] && time_till=$(date -d "$time" +%s%N)
+while [[ $(date +%s%N) -lt $time_till ]]; do sleep 0.01; done && \
+  {
+    FIFO="/tmp/bash_wakeup_pipe_$target_pid"
+    [[ -p "$FIFO" ]] && \
+      {
+        echo  > "$FIFO"
+      } || \
+      {
+        [[ -f "/dev/shm/bgtimer_storage_$target_pid" ]] && \
+          {
+            kill -SIGUSR1 "$target_pid"
+            kill -SIGWINCH "$target_pid"
+          }
+      }
+  } &
+
 
 timer_pid="$!"
 
-echo \
-"Timer started till time: $time "\
-"for shell: $target_pid "\
-"with pid: $timer_pid"
+echo -e \
+"Timer started till time: $time\n"\
+"  Shell pid: $target_pid\n"\
+"  Timer pid: $timer_pid"
