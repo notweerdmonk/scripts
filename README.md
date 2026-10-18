@@ -117,9 +117,11 @@ Smol (303 lines, see [other](https://media1.tenor.com/m/CzbOTB8R8OYAAAAd/otters-
 
 ### [snakecase](snakecase)
 
-AWK-driven refactoring helper that rewrites identifiers into `snake_case` inside one or more files. It supports optional backups and contains a release mode that strips debug blocks from the script itself.
+AWK-driven refactoring helper that rewrites identifiers from camelCase, PascalCase, kebab-case, or Train-Case into `snake_case` inside one or more files. Supports `-b`/`--backup` (keep a `<file>.orig` copy), `-d`/`--debug`, and `-r`/`--release` (strip the debug blocks from the script itself).
 
-Dependencies visible from the script: `awk`, `realpath`, `sed`, `cp`, `rm`.
+Requires GNU awk (`gensub` and array `match`). Output is written to a temp file and only copied over the source when awk succeeds.
+
+Dependencies visible from the script: `awk` (GNU), `realpath`, `sed`, `cp`, `rm`.
 
 ### [syncp4repo](syncp4repo)
 
