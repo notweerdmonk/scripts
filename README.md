@@ -19,6 +19,7 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 - [slack-closet](slack-closet)
 - [snakecase](snakecase)
 - [syncp4repo](syncp4repo)
+- [tabulate.awk](tabulate.awk)
 - [wallpaper.sh](wallpaper.sh)
 - [youtube-cli](youtube-cli)
 
@@ -116,6 +117,12 @@ Dependencies visible from the script: `awk`, `realpath`, `sed`, `cp`, `rm`.
 Python 3 utility for Perforce workflows. It reads command-line arguments or an XML task file, logs activity, and runs `p4 sync` or `p4 opened` commands for configured workspaces.
 
 Related file: [`const.py`](const.py).
+
+### [tabulate.awk](tabulate.awk)
+
+GNU awk program that formats a pipe- or colon-delimited text stream into a three-column table with word-wrapped cells. By default it treats input as `col1 | col2 | text`; with `-x`/`--comments` it parses `file:line: /* TODO: ... */` style records. Up to three trailing arguments override the column headers (defaults: `file`, `line`, `text`). Requires GNU awk for `BEGINFILE`, `match(..., arr)` and `xor()`.
+
+Usage: `awk -f tabulate.awk [-x] [header1 header2 header3]`
 
 ### [wallpaper.sh](wallpaper.sh)
 
