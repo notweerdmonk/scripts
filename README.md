@@ -5,7 +5,6 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 ## File Index
 
 - [README.md](README.md)
-- [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 - [DecompileVariables.py](DecompileVariables.py)
 - [bgtimer](bgtimer)
 - [bootstrap-chroot](bootstrap-chroot)
@@ -23,16 +22,13 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 - [tabulate.awk](tabulate.awk)
 - [wallpaper.sh](wallpaper.sh)
 - [youtube-cli](youtube-cli)
+- [yt-cli](yt-cli)
 
 ## Files
 
 ### [README.md](README.md)
 
 Repository overview and file index for GitHub.
-
-### [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
-
-Shared task plan and verification checklist used while preparing this README.
 
 ### [DecompileVariables.py](DecompileVariables.py)
 
@@ -146,3 +142,9 @@ Dependencies visible from the script: `wmname`, `id`, `pgrep`, `grep`, `cut`, `t
 Bash wrapper around `youtube-dl` and `mplayer`. It can bootstrap or update a local `youtube-dl` binary, persist its path into the script, list stream formats, and play a selected stream.
 
 Dependencies visible from the script: `curl`, `gpg`, `mplayer`, `youtube-dl`.
+
+### [yt-cli](yt-cli)
+
+Bash wrapper around `yt-dlp` and `mplayer`. It can install or update a local `yt-dlp` binary with PGP signature verification, persist its path and version into the script, list available stream formats, and play a selected stream. Supports playlist files with shuffle, stores cookies in `cookies.txt`, and offers optional zenity GUI dialogs and an audio progress bar. Licensed Beer-ware.
+
+Dependencies visible from the script: `curl`, `gpg`, `mplayer`, `yt-dlp`, `node`, `zenity` (optional GUI).

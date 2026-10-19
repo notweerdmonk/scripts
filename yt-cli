@@ -1,0 +1,823 @@
+#!/bin/bash
+
+################################################################################
+# "THE BEER-WARE LICENSE" (Revision 42):
+# notweerdmonk wrote this file. As long as you retain this notice you
+# can do whatever you want with this stuff. If we meet some day, and you think
+# this stuff is worth it, you can buy me a beer in return
+################################################################################
+
+# notweerdmonk 2026
+
+################################################################################
+# Script variables
+################################################################################
+
+MY_PATH=$(readlink -f "$0")
+MY_NAME=$(basename "$0")
+YTDLP_PATH=
+YTDLP_VERSION=
+
+# FEATURES
+# - stream any format (audio/video)
+# - uses yt-dlp with node.js runtime (for captcha solving)
+# - stores cookies in cookies.txt
+# - use playlist file with shuffle capability
+# - prompts user with available formats if not provided
+# - zenity based GUI with progress bar for audio
+# - automatic installation with signature verification
+# - does rudimentary version check for yt-dlp
+# - update yt-dlp
+# - colored messages
+
+################################################################################
+# Functions
+################################################################################
+
+function sigint_action {
+  [[ $STATE -gt 0 ]] && echo -ne "\r\x1b[2K"
+  STATE=-1
+  msg Exiting
+  exit
+}
+
+function cleanup {
+  # Delete our copy of the playlist
+  [[ -n "$PLAYLIST_COPY" ]] && rm -f "$PLAYLIST_COPY"
+
+  # Unset script variables
+  unset PLAYLIST_COPY
+  unset GUI
+  unset ARG
+  unset ACTION
+  unset MY_PATH
+  unset MY_NAME
+  unset YTDLP_PATH
+  unset YTDLP_VERSION
+  unset STATE
+}
+
+function ytdlp_check_retcode {
+  if [[ $1 -ne 0 ]]; then
+    wrn "retcode: $1"
+    if [[ $GUI -gt 0 ]]; then
+      zenity --warning --text="Invalid URL"
+    else
+      wrn Invalid URL
+    fi
+    exit 1
+  fi
+}
+
+# Start of logging functions
+
+function set_style {
+  local codes=()
+  local truecolor=0
+  local colors256=0
+
+  # --- detect capabilities ---
+  if [[ "$COLORTERM" =~ (truecolor|24bit) ]]; then
+    truecolor=1
+  fi
+
+  if command -v tput >/dev/null 2>&1; then
+    local ncolors
+    ncolors=$(tput colors 2>/dev/null)
+    if [[ "$ncolors" -ge 256 ]]; then
+      colors256=1
+    fi
+  fi
+
+  local arg
+  for arg in "$@"; do
+    arg="${arg,,}"  # lowercase
+
+    case "$arg" in
+      reset) codes=(0) ;;
+
+      # styles
+      bold) codes+=("1") ;;
+      dim) codes+=("2") ;;
+      italic) codes+=("3") ;;
+      underline) codes+=("4") ;;
+      blink) codes+=("5") ;;
+      reverse) codes+=("7") ;;
+      hidden) codes+=("8") ;;
+      strikethrough) codes+=("9") ;;
+
+      # style resets (do not affect colors)
+      no_bold|bold_off) codes+=("22") ;;
+      no_italic|italic_off) codes+=("23") ;;
+      no_underline|underline_off) codes+=("24") ;;
+      no_blink|blink_off) codes+=("25") ;;
+      no_reverse|reverse_off) codes+=("27") ;;
+      no_hidden|hidden_off) codes+=("28") ;;
+      no_strikethrough|strikethrough_off) codes+=("29") ;;
+
+      # standard fg
+      black) codes+=("30") ;;
+      red) codes+=("31") ;;
+      green) codes+=("32") ;;
+      yellow) codes+=("33") ;;
+      blue) codes+=("34") ;;
+      magenta) codes+=("35") ;;
+      cyan) codes+=("36") ;;
+      white) codes+=("37") ;;
+
+      # bright fg
+      bright_black) codes+=("90") ;;
+      bright_red) codes+=("91") ;;
+      bright_green) codes+=("92") ;;
+      bright_yellow) codes+=("93") ;;
+      bright_blue) codes+=("94") ;;
+      bright_magenta) codes+=("95") ;;
+      bright_cyan) codes+=("96") ;;
+      bright_white) codes+=("97") ;;
+
+      # standard bg
+      bg_black) codes+=("40") ;;
+      bg_red) codes+=("41") ;;
+      bg_green) codes+=("42") ;;
+      bg_yellow) codes+=("43") ;;
+      bg_blue) codes+=("44") ;;
+      bg_magenta) codes+=("45") ;;
+      bg_cyan) codes+=("46") ;;
+      bg_white) codes+=("47") ;;
+
+      # bright bg
+      bg_bright_black) codes+=("100") ;;
+      bg_bright_red) codes+=("101") ;;
+      bg_bright_green) codes+=("102") ;;
+      bg_bright_yellow) codes+=("103") ;;
+      bg_bright_blue) codes+=("104") ;;
+      bg_bright_magenta) codes+=("105") ;;
+      bg_bright_cyan) codes+=("106") ;;
+      bg_bright_white) codes+=("107") ;;
+
+      # --- 256 color foreground: color_123 ---
+      color_*)
+      if (( colors256 )); then
+        local n="${arg#color_}"
+        [[ "$n" =~ ^[0-9]+$ && "$n" -le 255 ]] && codes+=("38;5;$n")
+      fi
+      ;;
+
+      # --- 256 color background: bg_color_123 ---
+      bg_color_*)
+      if (( colors256 )); then
+        local n="${arg#bg_color_}"
+        [[ "$n" =~ ^[0-9]+$ && "$n" -le 255 ]] && codes+=("48;5;$n")
+      fi
+      ;;
+
+      # --- truecolor foreground: #RRGGBB ---
+      \#??????)
+        if (( truecolor )); then
+          local hex="${arg#\#}"
+          local r=$((16#${hex:0:2}))
+          local g=$((16#${hex:2:2}))
+          local b=$((16#${hex:4:2}))
+          codes+=("38;2;$r;$g;$b")
+        fi
+        ;;
+
+      # --- truecolor background: bg_#RRGGBB ---
+      bg_\#??????)
+        if (( truecolor )); then
+          local hex="${arg#bg_\#}"
+          local r=$((16#${hex:0:2}))
+          local g=$((16#${hex:2:2}))
+          local b=$((16#${hex:4:2}))
+          codes+=("48;2;$r;$g;$b")
+        fi
+        ;;
+
+      *)
+      echo "Unknown style: $arg" >&2
+      ;;
+    esac
+  done
+
+  # reset overrides everything
+  if [[ " ${codes[*]} " =~ " 0 " ]]; then
+    printf '\033[0m'
+    return
+  fi
+
+  if ((${#codes[@]} > 0)); then
+    printf '\033[%sm' "$(IFS=';'; echo "${codes[*]}")"
+  fi
+}
+
+function prompt {
+  set_style color_51 bold
+  echo -n "["
+  set_style color_82
+  echo -n "?"
+  set_style color_51
+  echo -n "] "
+  set_style bold_off
+  echo -ne "$@"
+  set_style reset
+}
+
+function msg {
+  set_style color_39 bold
+  echo -n "[" >&2
+  set_style color_82
+  echo -n "*" >&2
+  set_style color_39
+  echo -n "] " >&2
+  set_style bold_off
+  echo -e "$@" >&2
+  set_style reset
+}
+
+function wrn {
+  set_style bright_yellow bold
+  echo -n "[" >&2
+  set_style color_202
+  echo -n "!" >&2
+  set_style bright_yellow
+  echo -n "] " >&2
+  set_style bold_off
+  echo -e "$@" >&2
+  set_style reset
+}
+
+function err {
+  set_style bright_white bold
+  echo -n "[" >&2
+  set_style color_196
+  echo -n "x" >&2
+  set_style bright_white
+  echo -n "] " >&2
+  set_style color_9
+  echo -e "$@" >&2
+  set_style reset
+}
+
+function print_err_output {
+  while read -r line; do
+    err "$line"
+  done <<< "$@"
+}
+
+# End of logging functions
+
+function print_help {
+  local scriptname="$1"
+  local help_text
+  help_text="$(\
+echo -e "Usage:"
+echo
+echo -e "Install yt-dlp"
+echo
+echo -e "$scriptname [OPTIONS] [PATH]"
+echo
+echo -e "yt-dlp gets installed in the current directory. This happens only in the"
+echo -e "initial run."
+echo
+echo -e "Arguments"
+echo -e "  -t, --install\t\tInstall yt-dlp in current directory."
+echo -e "  -u, --update\t\tUpdate yt-dlp."
+echo -e "  -p, --path [PATH]\tUpdate yt-dlp path only."
+echo
+echo -e "Play"
+echo
+echo -e "$scriptname [OPTIONS] [URL|PLAYLIST] [FORMAT-CODE]"
+echo
+echo -e "Play given link in specified format. If format code is not provided, all"
+echo -e "available formats are listed and user is prompted."
+echo
+echo -e "Arguments"
+echo -e "  -l, --playlist\tPlay links listed in a file sequentially. If format code"
+echo -e "  \t\t\tis not provided, all available formats are listed and"
+echo -e "  \t\t\tuser is prompted."
+echo
+echo -e "  -s, --shuffle\t\tShuffles the links in the playlist."
+echo
+echo -e "Other arguments"
+echo -e "  -g, --gui\t\tUse zenity dialogs for GUI."
+echo -e "  -h, --help\t\tShow this message."
+)"
+
+  if [[ $GUI -gt 0 ]]; then
+    help_text="${help_text/\t\t\t\t/\t\t\t}"
+    help_text="$(echo "$help_text" | sed 's/</\&lt;/g' | sed 's/>/\&gt;/g')"
+    help_text="$(echo "$help_text" | sed -r 's/(Usage)(:)/<b><big>\1<\/big><\/b>\n/g')"
+    help_text="<span allow_breaks=\"true\"><tt>""$help_text""</tt></span>"
+    zenity --info --title="$MY_NAME" --no-wrap --text="$help_text" 2>/dev/null
+    case $? in
+      -1) err "Unexpected error"
+          exit 1
+    esac
+  else
+    echo "$help_text"
+    echo
+  fi
+}
+
+function parse_args {
+  # Exit on error
+  #set -e
+
+  local SHORT_OPTS="hgtup:l:s"
+  local LONG_OPTS="help,gui,install,update,path:,playlist:,shuffle"
+
+  declare PARSED
+  if ! PARSED=$(getopt --options="$SHORT_OPTS" --longoptions="$LONG_OPTS" --name "$MY_NAME" -- "$@")
+  then
+    exit 1
+  fi
+
+  # Reorder positional parameters
+  eval set -- "$PARSED"
+
+  GUI=0
+  ACTION="play"
+  SHIFT=0
+
+  while true; do
+    case "$1" in
+      -h|--help)
+        print_help "$MY_NAME"
+        exit 0
+        ;;
+      -g|--gui)
+        GUI=1
+        SHIFT=$((SHIFT + 1))
+        shift
+        ;;
+      -t|--install)
+        ACTION="install"
+        ARG="$2"
+        SHIFT=$((SHIFT + 2))
+        shift 2
+        break
+        ;;
+      -u|--update)
+        ACTION="update"
+        SHIFT=$((SHIFT + 1))
+        shift
+        break
+        ;;
+      -p|--path)
+        ACTION="setpath"
+        ARG="$2"
+        SHIFT=$((SHIFT + 2))
+        shift 2
+        break
+        ;;
+      -s|--shuffle)
+        ACTION="shuffle"
+        SHIFT=$((SHIFT + 1))
+        shift
+        ;;
+      -l|--playlist)
+        [[ $ACTION != shuffle ]] && ACTION="playlist"
+        ARG="$2"
+        SHIFT=$((SHIFT + 2))
+        shift 2
+        break
+        ;;
+      --)
+        [[ $ACTION == play ]] && \
+          [[ -n "$2" ]] && ARG="$2" && shift && SHIFT=$((SHIFT + 1))
+          shift
+        break
+        ;;
+      *)
+        wrn "Unexpected option: $1"
+        exit 1
+        ;;
+    esac
+  done
+}
+
+function escape_pango_markup {
+  local input="$1"
+
+  input="${input//&/&amp;}"
+  input="${input//</&lt;}"
+  input="${input//>/&gt;}"
+  input="${input//\"/&quot;}"
+  input="${input//\'/&apos;}"
+
+  echo -n "$input"
+}
+
+function play {
+  [[ $STATE -lt 0 ]] && exit
+
+  [[ -z "$1" ]] && wrn URL or playlist not provided && exit 1
+
+  declare retcode
+  if [[ $ACTION =~ play|playlist|shuffle ]]; then
+    declare title
+    title="$("$YTDLP_PATH" -q --no-warnings -e "$1" 2>/dev/null)"
+    retcode=$?
+    [[ $STATE -lt 0 ]] && exit 1
+    ytdlp_check_retcode $retcode
+
+    fmt=$2
+  else
+    return 255
+  fi
+
+  if [[ -z $fmt ]]; then
+    msg Choose format for \""$title"\"
+
+    local yt_dlp_color=always
+    [[ $GUI -gt 0 ]] && yt_dlp_color=never
+
+    declare response
+    response="$("$YTDLP_PATH" --no-warnings -q --color "$yt_dlp_color" --js-runtime node:"$(which node)" -F "$1" 2>/dev/null)"
+    retcode=$?
+    [[ $STATE -lt 0 ]] && exit 1
+    ytdlp_check_retcode $retcode
+
+    declare format_count
+    format_count=$(echo "$response" | sed -n '3,$p' | wc -l)
+    [[ $? -gt 0 || $STATE -lt 0 ]] && exit 1
+
+    local formats=()
+    while IFS= read -r fmt; do
+      formats+=("$(echo -n "$fmt"| sed -r 's/\x1b.*m(.*)\x1b.*m/\1/g')")
+    done < <(echo "$response" | sed -n '3,$p' | cut -d ' ' -f 1 2>/dev/null)
+    [[ ${#formats[@]} -ne $format_count || $STATE -lt 0 ]] && exit 1
+
+    if [[ $GUI -gt 0 ]]; then
+      local text
+      text=$(escape_pango_markup "Availabe formats for $title")
+
+      local response
+      response=$(echo -n "$response" | tr -d '\|')
+
+      local awk_prog
+       # shellcheck disable=SC2016
+      awk_prog='
+{
+  printf "CHOICE\n"
+  for (i = 1; i < NF - 1; ++i) {
+    printf "%s\n", $i
+  }
+  printf "%s %s\n", $(NF - 1), $NF
+}'
+      local headers=()
+      local arg
+      while IFS= read -r arg; do
+        headers+=(--column="$arg")
+      done < <(echo -n "$response" | head -n1 | tr -s ' ' | awk "$awk_prog")
+
+       # shellcheck disable=SC2016
+      awk_prog='
+BEGIN {
+  num_cols = 0
+}
+{
+  if (NR == 2) {
+    next
+  }
+  if (NR == 1) {
+    num_cols = NF
+    line = $0
+    start = 1
+    for (i = 1; i <= NF; ++i) {
+      anchors[i] = start
+      len = length($i)
+      start += len
+      line = substr(line, len + 1)
+      nexti = match(line, "[^ ]")
+      start += nexti - 1
+      line = substr(line, nexti)
+    }
+  } else {
+    printf "FALSE\n"
+    for (i = 1; i < num_cols - 1; ++i) {
+      text = substr($0, anchors[i], anchors[i + 1] - anchors[i])
+      printf "%s\n", text
+    }
+    text = substr($0, anchors[num_cols - 1])
+    printf "%s\n", text
+  }
+}'
+      local columns=()
+      while IFS= read -r arg; do
+        columns+=("$arg")
+      done < <(echo -n "$response" | awk "$awk_prog")
+
+      local width
+      width=$((${#headers[@]} * 80))
+      local height
+      height=$(echo "scale=0; $width * 9 / 16" | bc)
+
+      local fmt
+      fmt="$(zenity --width="$width" --height="$height" --list --radiolist --title="$MY_NAME" --text="$text" "${headers[@]}" "${columns[@]}")"
+    fi
+    [[ -z "$fmt" ]] && \
+      {
+        msg Available formats for "$title":
+        echo -e "${response}\n"
+        prompt "Choose format code: "
+        read -r fmt
+      }
+    
+    local valid=0
+    for f in "${formats[@]}"; do
+      [[ "$f" == "$fmt" ]] && \
+        {
+          valid=1
+          break
+        }
+    done
+    [[ -n "$fmt" && $valid -eq 1 ]] || \
+      {
+        wrn Invalid format
+        [[ $GUI -gt 0 ]] && \
+          zenity --warning --title="$MY_NAME" --text="Invalid format"
+        exit 1
+      }
+  fi
+
+  local stream_url
+  stream_url="$("$YTDLP_PATH" -q --js-runtime node:"$(which node)" --no-warnings -gf "$fmt" --cookies ./cookies.txt "$1" 2>/dev/null)"
+  retcode=$?
+  [[ $STATE -lt 0 ]] && exit 1
+  ytdlp_check_retcode $retcode
+
+  local is_video
+  is_video="$(mplayer -ao null -vo null -identify -frames 0 -really-quiet "$stream_url" 2>/dev/null | grep ID_VIDEO_ID)"
+
+  local play_cmd
+  # shellcheck disable=SC2016
+  play_cmd='mplayer -cache 65536 -osdlevel 3 -msglevel all=0:cplayer=3:statusline=5:seek=5:stream=5:network=5 -ontop -cookies -cookies-file ./cookies.txt "$stream_url" 2>/dev/null'
+
+  [[ -z $is_video && $GUI -gt 0 ]] && \
+    play_cmd+=" | stdbuf -o0 awk -v RS='\\r' '/^A:/ && !/A-V:/ { if (NF > 4 &&
+    \$5 != 0) { print (\$2 / \$5) * 100 } else { print 100 } }' | zenity
+      --progress --title=\"\$MY_NAME\" --text=\"\$title\" --percentage=0 --auto-close" && \
+
+  msg Starting mplayer
+  msg Playing \""$title"\"
+  msg Using format code "$fmt"
+
+  STATE=1
+  title=$(escape_pango_markup "$title") stream_url="$stream_url" bash -c "$play_cmd"
+  retcode=$?
+  [[ $STATE -lt 0 ]] && exit 1 || STATE=0
+
+  [[ $GUI -gt 0 ]] && echo -ne "\r\x1b[2K" || echo
+
+  if [[ $retcode -gt 0 ]]; then
+    if [[ $GUI -gt 0 ]]; then
+      zenity --warning --text="Error while playing"
+    else
+      err "Error while playing"
+    fi
+    exit 1
+  fi
+
+  msg Playback ended
+}
+
+################################################################################
+# Script starts
+################################################################################
+
+# Global state
+STATE=0
+
+# Exit hook
+trap cleanup EXIT
+
+# SIGINT hook
+trap sigint_action SIGINT
+
+# Parse arguments
+parse_args "$@"
+shift $SHIFT
+
+# Set yt-dlp path
+if [[ $ACTION == setpath ]]; then
+  if [[ -z "$ARG" ]]; then
+    wrn No path provided for yt-dlp
+  else
+    YTDLP_PATH=$(realpath "$ARG")/yt-dlp
+    sed -i "$(grep -n -m1 "^YTDLP_PATH=" "$MY_PATH" | cut -d: -f1)s|.*|YTDLP_PATH=\"$YTDLP_PATH\"|" "$MY_PATH"
+    YTDLP_VERSION=$("$YTDLP_PATH" --version 2>/dev/null)
+    [[ $? -gt 0 || $STATE -lt 0 ]] && exit 1
+    sed -i "$(grep -n -m1 "^YTDLP_VERSION=" "$MY_PATH" | cut -d: -f1)s|.*|YTDLP_VERSION=\"$YTDLP_VERSION\"|" "$MY_PATH"
+  fi
+  exit
+fi
+
+# Setup yt-dlp
+if [[ $ACTION == install  || -z "$YTDLP_PATH" ]]; then
+  function setup_cleanup {
+      rm -f "$keyfile" yt-dlp-public.key trustdb.gpg SHA2-256SUMS.sig SHA2-512SUMS.sig SHA2-256SUMS SHA2-512SUMS
+  }
+  trap setup_cleanup EXIT
+
+  msg Checking for MPlayer
+  mplayer_path=$(which mplayer)
+  if [[ -n "${mplayer_path}" ]]; then
+    mplayer_version=$(${mplayer_path} -v | sed -n '1p' | cut -d, -f1)
+    msg Found "${mplayer_version}"
+  else
+    err Could not find Mplayer
+    exit 1
+  fi
+
+  if [[ -n "$ARG" && "$ARG" != "--" ]]; then
+    cd "$ARG"
+  else
+    cd "$(dirname "$MY_PATH")"
+  fi
+
+  YTDLP_PATH=$(pwd)
+  msg Installing yt-dlp at "$YTDLP_PATH"
+
+  msg Downloading yt-dlp
+  curl -sLO https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+  if [[ ! -f yt-dlp ]]; then
+    err Could not download yt-dlp
+    exit 1
+  fi
+  chmod u+x yt-dlp
+
+  msg Downloading SHA2-256SUMS.sig
+  curl -sLO https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS.sig
+  if [[ ! -f SHA2-256SUMS.sig ]]; then
+    err Could not download SHA2-256SUMS.sig
+    exit 1
+  fi
+  msg Downloading SHA2-512SUMS.sig
+  curl -sLO https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-512SUMS.sig
+  if [[ ! -f SHA2-512SUMS.sig ]]; then
+    err Could not download SHA2-512SUMS.sig
+    exit 1
+  fi
+  msg Downloading SHA2-256SUMS
+  curl -sLO https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS
+  if [[ ! -f SHA2-256SUMS ]]; then
+    err Could not download SHA2-256SUMS
+    exit 1
+  fi
+  msg Downloading SHA2-512SUMS
+  curl -sLO https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-512SUMS
+  if [[ ! -f SHA2-512SUMS ]]; then
+    err Could not download SHA2-512SUMS
+    exit 1
+  fi
+  msg Downloading PGP key
+  curl -sL https://github.com/yt-dlp/yt-dlp/raw/master/public.key -o yt-dlp-public.key
+  if [[ ! -f yt-dlp-public.key ]]; then
+    err Could not find PGP key
+    exit 1
+  fi
+  msg Downloaded files
+
+  set -e
+
+  keyfile=$(mktemp --suffix=.gpg)
+  gpg --yes -o "$keyfile" --dearmor yt-dlp-public.key
+
+  msg Verifying SHA2-256SUMS
+  if ! gpg --no-default-keyring --keyring "$keyfile" --homedir ./ --verify SHA2-256SUMS.sig SHA2-256SUMS 2>/dev/null; then
+    err Could not verify PGP signature for SHA2-256SUMS
+    exit 1
+  fi
+  msg Verified SHA2-256SUMS
+
+  msg Verifying SHA2-512SUMS
+  if ! gpg --no-default-keyring --keyring "$keyfile" --homedir ./ --verify SHA2-512SUMS.sig SHA2-512SUMS 2>/dev/null; then
+    err Could not verify PGP signature for SHA2-512SUMS
+    exit 1
+  fi
+  msg Verified SHA2-512SUMS
+
+  msg Verifying yt-dlp download checksums
+
+  msg Verifying sha2 256
+  if ! grep -w yt-dlp$ SHA2-256SUMS | sha256sum --check - 2>/dev/null
+  then
+    err yt-dlp SHA2-256 checksum failed && exit 1
+  fi
+
+  msg Verifying sha2 512
+  if ! grep -w yt-dlp$ SHA2-512SUMS | sha512sum --check - 2>/dev/null
+  then
+    err yt-dlp SHA2-512 checksum failed && exit 1
+  fi
+
+  msg Verified yt-dlp download checksums
+
+  set +e
+  setup_cleanup
+
+  YTDLP_PATH=$(realpath yt-dlp)
+  sed -i "$(grep -n -m1 "^YTDLP_PATH=" "$MY_PATH" | cut -d: -f1)s|.*|YTDLP_PATH=\"$YTDLP_PATH\"|" "$MY_PATH"
+
+  YTDLP_VERSION=$("$YTDLP_PATH" --version 2>/dev/null)
+  [[ $? -gt 0 || $STATE -lt 0 ]] && exit 1
+  msg yt-dlp version is "$YTDLP_VERSION"
+  sed -i "$(grep -n -m1 "^YTDLP_VERSION=" "$MY_PATH" | cut -d: -f1)s|.*|YTDLP_VERSION=\"$YTDLP_VERSION\"|" "$MY_PATH"
+
+  msg Installed "$YTDLP_PATH"
+
+  exit
+fi
+
+# Update yt-dlp
+if [[ $ACTION == update ]]; then
+  # only update yt-dlp for now
+  msg Updating "$YTDLP_PATH"
+  "$YTDLP_PATH" -U
+  YTDLP_VERSION=$("$YTDLP_PATH" --version 2>/dev/null)
+  [[ $? -gt 0 || $STATE -lt 0 ]] && exit 1
+  msg yt-dlp version is "$YTDLP_VERSION"
+  sed -i "$(grep -n -m1 "^YTDLP_VERSION=" "$MY_PATH" | cut -d: -f1)s|.*|YTDLP_VERSION=\"$YTDLP_VERSION\"|" "$MY_PATH"
+  exit
+fi
+
+# yt-dlp version check
+if [[ "$YTDLP_VERSION" != $("$YTDLP_PATH" --version 2>/dev/null) ]]; then
+  [[ $STATE -lt 0 ]] && exit 1
+  wrn yt-dlp version mismatch
+  wrn Run "$MY_NAME" --update
+  exit 1
+fi
+
+# Define playlist chooser and yt-dlp URL functions
+if [[ $ACTION == shuffle ]]; then
+  function playlist_chooser {
+    local next_to_play
+    next_to_play=$(shuf -n1 "$1")
+    sed -i "\|$next_to_play|d" "$1"
+    echo "$next_to_play"
+  }
+elif [[ $ACTION == playlist ]]; then
+  function playlist_chooser {
+    # shellcheck disable=SC2015
+    [[ -c "$1" ]] && \
+      {
+        sed -n "$2"p "$1"
+        :
+      } || \
+      sed "$2 q;d" "$1"
+  }
+fi
+
+if [[ $ACTION == play ]]; then
+  function yt_dlp_input_url {
+    echo "$ARG"
+  }
+else
+  function yt_dlp_input_url {
+    playlist_chooser "$ARG" "$1"
+  }
+fi
+
+# URL or playlist check
+if [[ -z "$ARG" ]]; then
+  [[ $ACTION == play ]] && \
+    prompt_msg="Enter URL" || \
+    prompt_msg="Enter playlist"
+
+  if [[ $GUI -gt 0 ]]; then
+    ARG=$(zenity --entry --width=400 --title="$MY_NAME" --text="$prompt_msg" 2>/dev/null)
+    case $? in
+      -1) err "Unexpected error"
+          exit 1
+    esac
+  else
+    prompt "$prompt_msg"": "
+    read -r ARG
+  fi
+fi
+
+# Let's play something
+# shellcheck disable=SC2015
+[[ $ACTION =~ playlist|shuffle ]] && \
+  {
+    [[ ! -e "$ARG" ]] && wrn Playlist not found && exit 1 || \
+    function play_from_playlist {
+      PLAYLIST_COPY=$(mktemp --suffix="$MY_NAME")
+      cp "$ARG" "$PLAYLIST_COPY"
+      ARG="$PLAYLIST_COPY"
+      local playlist_count
+      playlist_count=$(wc -l < "$ARG")
+      for ((uidx=1; uidx<=playlist_count; ++uidx)); do
+        play "$(yt_dlp_input_url "$uidx")" "$1"
+      done
+    } && \
+    play_from_playlist "$1"
+    :
+  } || \
+    play "$ARG" "$1"
+
+################################################################################
+# End
+################################################################################
