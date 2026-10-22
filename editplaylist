@@ -293,7 +293,44 @@ sed_pattern='/^|\([[:space:]]*Song[[:space:]]*\|[[:space:]]*'\
 playlist_content() {
     sed -n '/^===playlist===$/,/^===playlist===$/p' "$1" | \
       sed '/^===playlist===$/d' | \
-      sed "$sed_pattern"
+      sed "$sed_pattern" | awk '
+{
+    # Remove optional leading and trailing pipe characters from the record.
+    sub(/^\|[[:space:]]*/, "", $0)
+    sub(/[[:space:]]*\|$/, "", $0)
+
+    # Split input record into parts separated by |
+    p = split($0, parts, /\|/)
+    if (p < 2) next
+
+    any_col_empty = 0
+    for (i = 1; i <= p; ++i) {
+        # Trim whitespace from the extracted column.
+        sub(/^[[:space:]]*/, "", parts[i])
+        sub(/[[:space:]]*$/, "", parts[i])
+        # Append to previous columns
+        prev_col[i] = prev_col[i] " " parts[i]
+        any_col_empty = any_col_empty || !length(parts[i])
+    }
+
+    SEP = "| "
+    if (any_col_empty) {
+        # Append to columns of previous row if any column is empty
+        rows[n] = prev_col[1]
+        for (i = 2; i <= p; ++i) rows[n] = rows[n] SEP prev_col[i]
+    } else {
+        # Keep each parsed row until the END block prints the table.
+        rows[++n] = parts[1]
+        for (i = 2; i <= p; ++i) rows[n] = rows[n] SEP parts[i]
+        # Reset previous columns as current columns
+        for (i = 1; i <= p; ++i) prev_col[i] = parts[i]
+    }
+}
+
+END {
+    for (i in rows) print rows[i]
+}
+'
 }
 
 # Replace the content between playlist markers with the contents of the named
