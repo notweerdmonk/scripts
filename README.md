@@ -12,6 +12,7 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 - [cscope-setup](cscope-setup)
 - [editplaylist](editplaylist)
 - [find_main.py](find_main.py)
+- [icebarg.bash](icebarg.bash)
 - [newfile.sh](newfile.sh)
 - [projects.sh](projects.sh)
 - [rattles](rattles)
@@ -81,6 +82,12 @@ Dependencies visible from the script: `bash`, `getopt` (util-linux), `sed`, `sor
 ### [find_main.py](find_main.py)
 
 Python script for use inside GDB. It automates locating a program entry point and `main`, and registers helper GDB commands for breakpoints, watchpoints, and stepping to relevant addresses.
+
+### [icebarg.bash](icebarg.bash)
+
+Bash argument parser library built on GNU getopt. Provides `make_optstring` (builds the getopt option string from `name:arg|name:noarg` definitions), `make_optsdesc` (builds a help-text array), `print_usage`, and `parse_opts`. Consuming scripts declare their options via these helpers and set `scriptname`/`scriptdesc` themselves.
+
+Dependencies visible from the script: `bash`, `getopt` (util-linux).
 
 ### [newfile.sh](newfile.sh)
 
