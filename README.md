@@ -115,7 +115,11 @@ Dependencies visible from the script: `curl`, `python`.
 
 ### [slack-closet](slack-closet)
 
-Smol (303 lines, see [other](https://media1.tenor.com/m/CzbOTB8R8OYAAAAd/otters-otter.gif)), over-caffeinated key-value vault built on SQLite; it auto-routes keys into users, channels, messages, or message threads, validates the timestamp keys, uses `jq` to make sure message JASON isn’t lying, and lets you `put`, `get`, `get-all`, `list`, `search`, and `upsert` like a command-line librarian with trust issues. The WAL mode is there so the database can be a bit more concurrency-friendly, and the whole thing behaves like a structured spreadsheet that got a university degree in regex. Does or does not make you more productive, just does not try.
+Smol (587 lines, see [other](https://media1.tenor.com/m/CzbOTB8R8OYAAAAd/otters-otter.gif)), over-caffeinated key-value vault built on SQLite; it auto-routes keys into users, channels, messages, or message threads, validates the timestamp keys, uses `jq` to make sure message JASON isn’t lying, and lets you `put`, `get`, `get-all`, `list`, `search`, and `upsert` like a command-line librarian with trust issues. The WAL mode is there so the database can be a bit more concurrency-friendly, and the whole thing behaves like a structured spreadsheet that got a university degree in regex. Does or does not make you more productive, just does not try.
+
+The script sources the shared [`icebarg.bash`](icebarg.bash) argument parser and adds explicit input validation (`check_action`, `check_key`, `check_type`, `check_value`, `check_args`), write/read/delete verification via `check_kv_pairs`, and `jq`-based output formatting (including `-j/--json` raw mode).
+
+Dependencies visible from the script: `bash`, `sqlite3`, `jq`, [`icebarg.bash`](icebarg.bash).
 
 
 ### [snakecase](snakecase)
