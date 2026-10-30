@@ -21,6 +21,7 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 - [snakecase](snakecase)
 - [syncp4repo](syncp4repo)
 - [tabulate.awk](tabulate.awk)
+- [todo](todo)
 - [wallpaper.sh](wallpaper.sh)
 - [youtube-cli](youtube-cli)
 - [yt-cli](yt-cli)
@@ -141,6 +142,12 @@ Related file: [`const.py`](const.py).
 GNU awk program that formats a pipe- or colon-delimited text stream into a three-column table with word-wrapped cells. By default it treats input as `col1 | col2 | text`; with `-x`/`--comments` it parses `file:line: /* TODO: ... */` style records. Up to three trailing arguments override the column headers (defaults: `file`, `line`, `text`). Requires GNU awk for `BEGINFILE`, `match(..., arr)` and `xor()`.
 
 Usage: `awk -f tabulate.awk [-x] [header1 header2 header3]`
+
+### [todo](todo)
+
+Very minimal action-items manager backed by a plain-text checkbox file. Interactive TUI supports adding, toggling, deleting, and navigating items (arrow keys, j/k, Ctrl-n/p, Space/Enter, A/N add, d delete, Esc/q exit); `--list`/`-l` prints only checkbox lines from the file.
+
+Dependencies visible from the script: `bash`, `stty` (util-linux).
 
 ### [wallpaper.sh](wallpaper.sh)
 

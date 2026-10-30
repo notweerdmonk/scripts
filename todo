@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+
+# This is free and unencumbered software released into the public domain.
+#
+# Anyone is free to copy, modify, publish, use, compile, sell, or
+# distribute this software, either in source code form or as a compiled
+# binary, for any purpose, commercial or non-commercial, and by any
+# means.
+#
+# In jurisdictions that recognize copyright laws, the author or authors
+# of this software dedicate any and all copyright interest in the
+# software to the public domain. We make this dedication for the benefit
+# of the public at large and to the detriment of our heirs and
+# successors. We intend this dedication to be an overt act of
+# relinquishment in perpetuity of all present and future rights to this
+# software under copyright law.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+#
+# For more information, please refer to <https://unlicense.org/>
+
+# notweerdmonk 2026
+
+# very minimal action item manager
+
+set -Eeuo pipefail
+
+usage() {
+  echo "Usage: $0 [--list|-l] FILE" >&2
+  exit 2
+}
+
+list_only=0
+file=""
+selected=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --list|-l) list_only=1 ;;
+    -*) usage ;;
+    *) [[ -z "$file" ]] || usage; file=$arg ;;
+  esac
+done
+
+[[ -n "$file" && -f "$file" && -r "$file" ]] || usage
+
+# List only checkbox items; headings and other lines are left out.
+if (( list_only )); then
+  grep -E '^[[:space:]]*(-[[:space:]]+)?\[[[:space:]xX]\]' "$file" || true
+  exit 0
+fi
+
+# Load the file and record which lines are action items.
+mapfile -t lines < "$file"
+#task_lines=()
+
+refresh_task_lines() {
+  task_lines=()
+  for i in "${!lines[@]}"; do
+    if [[ ${lines[i]} =~ ^[[:space:]]*(-[[:space:]]+)?\[([[:space:]xX])\] ]]; then
+      task_lines+=("$i")
+    fi
+  done
+}
+
+update_timestamp() {
+  local stamp insert_at i found
+  local -a new_lines
+
+  stamp="Updated: $(date --rfc-email)"
+  found=0
+
+  # Refresh an existing timestamp instead of adding another.
+  for i in "${!lines[@]}"; do
+    if [[ ${lines[i]} == "Updated: "* ]]; then
+      lines[i]=$stamp
+      found=1
+      break
+    fi
+  done
+
+  if (( ! found )); then
+    insert_at=0
+
+    if ((${#lines[@]} > 0)) &&
+       [[ ${lines[0]} =~ ^#{1,6}[[:space:]]+ ]]; then
+      insert_at=1
+    elif ((${#lines[@]} > 1)) &&
+         [[ -n ${lines[0]} && ${lines[1]} =~ ^-{3,}[[:space:]]*$ ]]; then
+      insert_at=2
+    fi
+
+    new_lines=()
+    for ((i = 0; i <= ${#lines[@]}; i++)); do
+      (( i == insert_at )) && new_lines+=("$stamp")
+      (( i < ${#lines[@]} )) && new_lines+=("${lines[i]}")
+    done
+    lines=("${new_lines[@]}")
+  fi
+
+  refresh_task_lines
+}
+
+delete_item() {
+  ((${#task_lines[@]} > 0)) || return 0
+
+  local line_index i
+  local -a new_lines
+
+  line_index=${task_lines[selected]}
+  new_lines=()
+
+  for i in "${!lines[@]}"; do
+    if (( i != line_index )); then
+      new_lines+=("${lines[i]}")
+    fi
+  done
+
+  lines=("${new_lines[@]}")
+  update_timestamp
+
+  if (( selected >= ${#task_lines[@]} )); then
+    selected=$((${#task_lines[@]} - 1))
+  fi
+  (( selected < 0 )) && selected=0
+
+  save_file || {
+    echo "Could not save changes to: $file" >&2
+    return 1
+  }
+}
+
+cleanup() {
+  stty "$saved_stty" 2>/dev/null || true
+  printf '\033[0m\033[?25h'
+}
+
+save_file() {
+  [[ ${#lines[@]} -eq 0 ]] && return 255
+  local tmp
+  tmp=$(mktemp "${file}.tmp.XXXXXX") || return 1
+  cp -p "$file" "$tmp" || { rm -f "$tmp"; return 1; }
+  printf '%s\n' "${lines[@]}" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$file"
+}
+
+draw() {
+  printf '\033[H\033[2J'
+  printf "Action items\t↑/↓ or j/k or Ctrl-n/p: move\tSpace/Enter: toggle\n"
+  printf "\t\tA/N: add\td: delete\tEsc/q: exit\n"
+  echo
+
+  if ((${#task_lines[@]} == 0)); then
+    echo "No action items found."
+    exit 0
+  fi
+
+  local task_index=0
+  for i in "${!lines[@]}"; do
+    local line
+    line="${lines[$i]##- }"
+    if (( task_index < ${#task_lines[@]} )) &&
+       (( i == task_lines[task_index] )); then
+      if (( task_index == selected )); then
+        # 47 is the 4-bit white/light-gray background; 30 is black text.
+        printf '\033[1;30;47m%s\033[0m\n' "$line"
+      else
+        printf '%s\n' "$line"
+      fi
+      ((task_index += 1))
+    else
+      printf '%s\n' "$line"
+    fi
+  done
+}
+
+add_item() {
+  local new_item read_status
+
+  printf '\033[0m\033[?25h'
+  stty "$saved_stty"
+  printf "New action item: "
+  read_status=0
+  IFS= read -r new_item || read_status=$?
+  stty -echo -icanon min 1 time 0
+  printf '\033[?25l'
+
+  (( read_status == 0 )) || return 0
+  [[ -n "$new_item" ]] || return 0
+
+  lines+=("- [ ] $new_item")
+  update_timestamp
+  selected=$((${#task_lines[@]} - 1))
+
+  save_file || {
+    echo "Could not save changes to: $file" >&2
+    return 1
+  }
+}
+
+refresh_task_lines
+
+saved_stty=$(stty -g)
+
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+
+stty -echo -icanon min 1 time 0
+printf '\033[?25l'
+
+while true; do
+  draw
+  key=""
+  IFS= read -rsn1 key || break
+
+  case "$key" in
+    $'\x1b')
+      # Arrow keys arrive as an Escape sequence; a lone Escape exits.
+      if IFS= read -rsn1 -t 0.1 next; then
+        if [[ $next == "[" ]] && IFS= read -rsn1 -t 0.1 next; then
+          case "$next" in
+            A) (( selected > 0 )) && ((selected -= 1)) || : ;;
+            B) (( selected + 1 < ${#task_lines[@]} )) && ((selected += 1)) ;;
+            3)
+              if IFS= read -rsn1 -t 0.1 next && [[ $next == "~" ]]; then
+                delete_item || break
+              fi
+              ;;
+          esac
+        fi
+      else
+        break
+      fi
+      ;;
+    q)
+      break
+      ;;
+    d)
+      delete_item || break
+      ;;
+    j|$'\x0e') # j or Ctrl-N
+      (( selected + 1 < ${#task_lines[@]} )) && ((selected += 1))
+      ;;
+    k|$'\x10') # k or Ctrl-P
+      (( selected > 0 )) && ((selected -= 1)) || :
+      ;;
+    A|N|$'\x01') # Shift-A, Shift-N, or Ctrl-A
+      add_item || break
+      ;;
+    ''|' '|$'\n'|$'\r')
+      if ((${#task_lines[@]} > 0)); then
+        line_index=${task_lines[selected]}
+        line=${lines[line_index]}
+
+        if [[ $line =~ ^([[:space:]]*(-[[:space:]]+)?[[:space:]]*)\[([[:space:]xX])\](.*)$ ]]; then
+          prefix=${BASH_REMATCH[1]}
+          mark=${BASH_REMATCH[3]}
+          suffix=${BASH_REMATCH[4]}
+
+          if [[ $mark == " " ]]; then
+            lines[line_index]="${prefix}[x]${suffix}"
+          else
+            lines[line_index]="${prefix}[ ]${suffix}"
+          fi
+
+          update_timestamp
+          save_file || {
+            echo "Could not save changes to: $file" >&2
+            break
+          }
+        fi
+      fi
+      ;;
+  esac
+done
