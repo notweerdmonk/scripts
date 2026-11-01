@@ -17,6 +17,7 @@ Personal utility scripts for shell workflows, debugging, reverse engineering, me
 - [projects.sh](projects.sh)
 - [rattles](rattles)
 - [scrape-imgur-album](scrape-imgur-album)
+- [screen.bash](screen.bash)
 - [slack-closet](slack-closet)
 - [snakecase](snakecase)
 - [syncp4repo](syncp4repo)
@@ -113,6 +114,12 @@ Dependencies visible from the script: `tput`, `sleep`, `realpath`, `infocmp`, `g
 Bash script that resolves media URLs from an Imgur album and downloads each item with `curl`. It supports either a supplied Imgur client ID or a built-in API path.
 
 Dependencies visible from the script: `curl`, `python`.
+
+### [screen.bash](screen.bash)
+
+Bash library for terminal rendering and keyboard interaction. Provides cursor movement, colors/styles (ANSI 256 and truecolor), screen clearing/saving, keyboard reading (`read_key`), screen buffer management (`screen_enter`/`leave`, `clear_screen`), and basic box drawing. Consumed by interactive terminal scripts such as `jsonview`.
+
+Dependencies visible from the script: `bash`, `tput`.
 
 ### [slack-closet](slack-closet)
 
