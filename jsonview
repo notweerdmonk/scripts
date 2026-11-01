@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+
+# This is free and unencumbered software released into the public domain.
+#
+# Anyone is free to copy, modify, publish, use, compile, sell, or
+# distribute this software, either in source code form or as a compiled
+# binary, for any purpose, commercial or non-commercial, and by any
+# means.
+#
+# In jurisdictions that recognize copyright laws, the author or authors
+# of this software dedicate any and all copyright interest in the
+# software to the public domain. We make this dedication for the benefit
+# of the public at large and to the detriment of our heirs and
+# successors. We intend this dedication to be an overt act of
+# relinquishment in perpetuity of all present and future rights to this
+# software under copyright law.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+#
+# For more information, please refer to <https://unlicense.org/>
+
+# notweerdmonk 2026
+
+# Interactive terminal JSON viewer — paginated object/array display
+# using an external screen.bash library; supports file or stdin (-).
+
+set -euo pipefail
+
+tmp_input=
+display_name=
+
+if (($# > 1)); then
+    printf 'Usage: %s [FILE.json|-]\n' "${0##*/}" >&2
+    exit 2
+fi
+
+if (($# == 1)) && [[ "$1" != "-" ]]; then
+    file="$1"
+    [[ ! -f "$file" ]] && {
+        printf 'File %s not found\n' "$file" >&2
+        exit 1
+    }
+    display_name=${file##*/}
+    case "$display_name" in
+        *.[jJ][sS][oO][nN]) display_name=${display_name%.*} ;;
+    esac
+else
+    if [[ -t 0 ]]; then
+        printf 'Provide a JSON file or pipe JSON to stdin\n' >&2
+        exit 2
+    fi
+    tmp_input="$(mktemp)"
+    mktemp_status="$?"
+    [[ $mktemp_status -ne 0 ]] && {
+        printf 'mktemp failed\n' >&2
+        exit 1
+    }
+    unset mktemp_status
+    [[ ! -f "$tmp_input" ]] && {
+        printf 'Could not create temporary file\n' >&2
+        exit 1
+    }
+    cat > "$tmp_input"
+    file="$tmp_input"
+    display_name=stdin
+fi
+
+[[ ! -r "$file" ]] && {
+    printf 'Cannot read the JSON file %s\n' "$file" >&2
+    exit 1
+}
+
+jq -e 'type == "object" or type == "array"' "$file" >/dev/null || {
+    printf 'Top-level JSON must be an object or array\n' >&2
+    exit 1
+}
+
+trap 'if [[ -n ${tmp_input:-} ]]; then rm -f -- "$tmp_input"; fi' EXIT
+
+screen_lib="${SCREEN_BASH:-"$(dirname -- "${BASH_SOURCE[0]}")/screen.bash"}"
+[[ -r "$screen_lib" ]] || {
+    printf 'Cannot read screen.bash library: %s\n' "$screen_lib" >&2
+    exit 1
+}
+
+# shellcheck source=screen.bash
+source "$screen_lib"
+
+[[ -t 1 ]] || {
+    printf 'Run this viewer in an interactive terminal\n' >&2
+    exit 1
+}
+
+for cmd in jq base64 fold tr tput stty; do
+    command -v "$cmd" >/dev/null 2>&1 || {
+        printf 'Missing required command %s\n' "$cmd" >&2
+        exit 1
+    }
+done
+
+# A top-level object is one screen. Each top-level array element is one screen.
+array_key=$(jq -r '
+  if type == "object" then
+    [
+      to_entries[]
+      | select(
+          (.value | type) == "array"
+          and all(.value[]; type == "object")
+        )
+      | .key
+    ][0] // empty
+  else
+    empty
+  end
+' "$file")
+
+if [[ -n "$array_key" ]]; then
+    display_name="$array_key"
+fi
+
+declare -a OBJECTS=()
+while IFS= read -r encoded_object; do
+    [[ -n "$encoded_object" ]] && OBJECTS+=("$encoded_object")
+done < <(
+    jq -er --arg array_key "$array_key" '
+      if type == "array" then
+        .[]
+      elif type == "object" and $array_key != "" then
+        .[$array_key][]
+      else
+        .
+      end
+      | tojson
+      | @base64
+    ' "$file"
+)
+
+((${#OBJECTS[@]} > 0)) || {
+    printf 'The JSON array is empty\n' >&2
+    exit 1
+}
+
+declare -a CONTENT_LINES=()
+declare -a LINE_KINDS=()
+declare -a VIEWPORT=()
+
+object_index=0
+scroll=0
+entered=0
+old_tty=$(stty -g </dev/tty)
+
+cleanup() {
+    stty "$old_tty" </dev/tty 2>/dev/null || true
+    if ((entered)); then
+        screen_leave
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
+stty -echo -icanon min 1 time 0 </dev/tty
+screen_enter
+entered=1
+
+read_viewer_key() {
+    local ch code suffix
+
+    IFS= read -r -s -n 1 ch </dev/tty || return 1
+
+    if [[ "$ch" != $'\e' ]]; then
+        REPLY="$ch"
+        return 0
+    fi
+
+    IFS= read -r -s -n 1 -t 0.2 code </dev/tty || {
+        REPLY=$'\e'
+        return 0
+    }
+
+    if [[ $code == '[' ]]; then
+        IFS= read -r -s -n 1 -t 0.2 code </dev/tty || true
+
+        case "$code" in
+            5|6)
+                IFS= read -r -s -n 1 -t 0.2 suffix </dev/tty || true
+                REPLY=$'\e['"$code$suffix"
+                ;;
+            *)
+                REPLY=$'\e['"$code"
+                ;;
+        esac
+    else
+        REPLY=$'\e'"$code"
+    fi
+}
+
+build_content() {
+    local cols width value_width json encoded_key encoded_value key line
+
+    cols="$(tput cols)"
+    width=$((cols - 2))
+    ((width < 1)) && width=1
+    value_width=$((width - 2))
+    ((value_width < 1)) && value_width=1
+
+    CONTENT_LINES=()
+    LINE_KINDS=()
+
+    json="$(printf '%s' "${OBJECTS[object_index]}" | base64 --decode)"
+
+    if jq -e 'type == "object"' <<<"$json" >/dev/null; then
+        while IFS=$'\t' read -r encoded_key encoded_value; do
+            key="$(
+              printf '%s' "$encoded_key" | base64 --decode |
+              tr '\000-\010\013-\037\177' ' '
+            )"
+
+            mapfile -t key_lines < <(printf '%s' "$key" | fold -w "$width")
+            ((${#key_lines[@]} > 0)) || key_lines=("")
+
+            for line in "${key_lines[@]}"; do
+                CONTENT_LINES+=("$line")
+                LINE_KINDS+=(key)
+            done
+
+            mapfile -t value_lines < <(
+                printf '%s' "$encoded_value" |
+                    base64 --decode |
+                    jq -r 'if type == "string" then . else . end' |
+                    tr '\000-\010\013-\037\177' ' ' |
+                    fold -w "$value_width"
+            )
+            ((${#value_lines[@]} > 0)) || value_lines=("")
+
+            for line in "${value_lines[@]}"; do
+                CONTENT_LINES+=("  $line")
+                LINE_KINDS+=(value)
+            done
+        done < <(
+            jq -r '
+              to_entries[]
+              | [(.key | tostring | @base64), (.value | tojson | @base64)]
+              | @tsv
+            ' <<<"$json"
+        )
+    else
+        mapfile -t CONTENT_LINES < <(
+            jq -r 'if type == "string" then . else . end' <<<"$json" |
+                tr '\000-\010\013-\037\177' ' ' |
+                fold -w "$width"
+        )
+        LINE_KINDS=()
+        for line in "${CONTENT_LINES[@]}"; do
+            LINE_KINDS+=(value)
+        done
+    fi
+
+    ((${#CONTENT_LINES[@]} > 0)) || {
+        CONTENT_LINES=("(empty object)")
+        LINE_KINDS=(value)
+    }
+}
+
+render() {
+    local rows cols view_height line row i
+
+    rows="$(tput lines)"
+    cols="$(tput cols)"
+    view_height=$((rows - 4))
+    ((view_height > 10)) && view_height=10
+    ((view_height < 1)) && view_height=1
+
+    build_content
+
+    if ((scroll + view_height > ${#CONTENT_LINES[@]})); then
+        scroll=$((${#CONTENT_LINES[@]} - view_height))
+    fi
+    ((scroll < 0)) && scroll=0
+
+    VIEWPORT=("${CONTENT_LINES[@]:scroll:view_height}")
+
+    clear_screen
+
+    cursor_move 1 1
+    bold
+    printf 'AdJSON View'
+    reset_style
+
+    cursor_move 2 1
+    printf '%s [%d/%d]' "$display_name" \
+    "$((object_index + 1))" "${#OBJECTS[@]}"
+
+    row=3
+    for ((i = 0; i < ${#VIEWPORT[@]}; i++)); do
+        cursor_move "$row" 1
+        clear_line
+
+        if [[ ${LINE_KINDS[scroll + i]} == key ]]; then
+            bold
+            printf '%s' "${VIEWPORT[i]}"
+            reset_style
+        else
+            printf '%s' "${VIEWPORT[i]}"
+        fi
+
+        row=$((row + 1))
+    done
+
+    cursor_move "$rows" 1
+    clear_line
+    bold
+    printf '%s' 'Up/Down|j/k'
+    reset_style
+    printf ' %s    ' 'scroll'
+    bold
+    printf '%s' 'PgDn/PgUp|Ctrl-N/P'
+    reset_style
+    printf ' %s    ' 'next/prev'
+    bold
+    printf '%s' 'q'
+    reset_style
+    printf ' %s' 'quit'
+
+    if ((${#CONTENT_LINES[@]} > view_height)); then
+        printf '   %d-%d/%d' \
+            "$((scroll + 1))" \
+            "$((scroll + ${#VIEWPORT[@]}))" \
+            "${#CONTENT_LINES[@]}"
+    fi
+}
+
+render
+
+while read_viewer_key; do
+    case "$REPLY" in
+        q) break ;;
+        $'\x0e'|$'\e[6~')
+            if ((object_index < ${#OBJECTS[@]} - 1)); then
+                object_index=$((object_index + 1))
+                scroll=0
+            fi
+            ;;
+        $'\x10'|$'\e[5~')
+            if ((object_index > 0)); then
+                object_index=$((object_index - 1))
+                scroll=0
+            fi
+            ;;
+        j|$'\e[B')
+            if ((scroll + 1 < ${#CONTENT_LINES[@]})); then
+                scroll=$((scroll + 1))
+            fi
+            ;;
+        k|$'\e[A')
+            if ((scroll > 0)); then
+                scroll=$((scroll - 1))
+            fi
+            ;;
+    esac
+    render
+done
